@@ -15,9 +15,10 @@
  */
 const puppeteer = require('puppeteer');
 const util = require('node:util');
-
+count = 0;
 var lastScriptLoadedTime = new Date().getTime() / 1000;
-
+var breakpointIDsToLines = {};
+var scriptIDsToURLs = {};
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -41,7 +42,10 @@ async function set_breakpoints(session, breakpoints) {
     var columnNumber = location.columnNumber;
     try {
       //console.log("setting breakpoint at " + scriptId + " " + lineNumber + " " + columnNumber);
-      await session.send('Debugger.setBreakpoint', {location: {scriptId: scriptId, lineNumber: lineNumber, columnNumber: columnNumber}});
+      var breakpoint = await session.send('Debugger.setBreakpoint', {location: {scriptId: scriptId, lineNumber: lineNumber, columnNumber: columnNumber}});
+      var breakpointLocation = breakpoint.actualLocation;
+      breakpointLocation.script = scriptIDsToURLs[scriptId];
+      breakpointIDsToLines[breakpoint.breakpointId] = breakpointLocation
     } catch(err) {
       //console.log(err);
     }
@@ -57,61 +61,86 @@ async function set_breakpoints(session, breakpoints) {
   const session = await page.target().createCDPSession();
   // Get all the breakpoints
   var all_breakpoints = []
-  await page.goto('http://groups.csail.mit.edu/cap/');
+  await page.goto('https://alfagroup.csail.mit.edu/');
+
   async function getAllBreakpoints(x) {
     lastScriptLoadedTime = new Date().getTime() / 1000;
+    scriptIDsToURLs[x.scriptId] = x.url;
     const breakpoints = await session.send("Debugger.getPossibleBreakpoints", {start: {scriptId: x.scriptId, lineNumber: 0}});
-    //console.log(breakpoints);
-    /*
-    for (var i = 0; i < breakpoints.locations.length; i++) {
-      var breakpoint = breakpoints.locations[i];
-      if (!contains(all_breakpoints, breakpoint)) {
-        all_breakpoints.push(breakpoint);
-      }
-    }
-    */
     all_breakpoints = all_breakpoints.concat(breakpoints.locations);
   }
 
+  async function getHeapObjectId(session, objectId) {
+
+  }
   async function getVars(x) {
-    //console.log(x.callFrames);
-    //debugger has an array of callframes. hardcoded to get the first one.
-    let callFrame = x.callFrames[0];
-    // each callframe can have multiple scopes, which are returned as an array. Get the first one, which is the one for 'updateLabel'
-    let scope = callFrame.scopeChain[0]
-    //scope.object is the object representing that scope. For local, it contains the variables in that scope. Get the objectId for the scope
-    let objId = scope.object.objectId;
-    // get the properties from the runtime, which will return the variable values.
-    var objects = await session.send("Runtime.getProperties", {objectId: objId});
-    for (var i = 0; i < objects.result.length; i++) {
-      obj = objects.result[i];
-      console.log(obj.name, obj.value);
+    
+    if (x.hitBreakpoints !== undefined) {
+      breakpoint = x.hitBreakpoints[0];
+      console.log(breakpointIDsToLines[breakpoint]);
     }
-    await session.send("Debugger.resume");
+    //debugger has an array of callframes. hardcoded to get the first one.
+    for (var i = 0; i < x.callFrames.length; i++) {
+      let callFrame = x.callFrames[i];
+      
+      // each callframe can have multiple scopes, which are returned as an array. 
+      for (var j = 0; j < callFrame.scopeChain.length; j++) {
+        let scope = callFrame.scopeChain[j]
+        if (scope.type !== 'local') {
+          continue;
+        }
+        //scope.object is the object representing that scope. For local, it contains the variables in that scope. Get the objectId for the scope
+        let objId = scope.object.objectId;
+        // get the properties from the runtime, which will return the variable values.
+        var objects = await session.send("Runtime.getProperties", {objectId: objId});
+        for (var i = 0; i < objects.result.length; i++) {
+          obj = objects.result[i];
+          if (obj.value !== undefined && obj.value.type !== "function") {
+            if (obj.value.type === 'object') {
+              var heapObjectId = await session.send("HeapProfiler.getHeapObjectId", {objectId: obj.value.objectId});
+              console.log(obj.name, heapObjectId);
+            }
+            //console.log(obj.name, obj.value, scope.type);
+          }
+
+        }
+      }
+    }
+    
+    
+    if (true) {
+      await session.send("Debugger.resume");
+      count = count+1;
+    }
   }
   
-
+  
+  
   session.on('Debugger.scriptParsed', getAllBreakpoints);
   session.on('Debugger.paused' , getVars);
+  
  
   
   const debugger_enabled = await session.send('Debugger.enable');
-  //const runtime_enabled = session.send('Runtime.enable');
-  await sleep(5000);
+  const runtime_enabled = session.send('Runtime.enable'); // not sure if we need to comment this out
+  await session.send("HeapProfiler.enable");
+  await session.send("HeapProfiler.startTrackingHeapObjects", {trackAllocations: true})
+  await sleep(2000);
   while (true) {
-    await sleep(5000);
+    await sleep(2000);
     if (new Date().getTime() / 1000 - lastScriptLoadedTime > 5) {
       break;
     }
     
   }
-  console.log(all_breakpoints.length + " before filtering");
+  /*
   all_breakpoints = all_breakpoints.filter((value, index, self) =>
   index === self.findIndex((t) => (
     value.scriptId === t.scriptId && value.lineNumber === t.lineNumber && value.columnNumber === t.columnNumber
   ))
   )
   console.log(all_breakpoints.length + " after filtering");
+  */
   set_breakpoints(session, all_breakpoints);
   //console.log(all_breakpoints[1].locations[0]);
   //const breakpoint = await session.send('Debugger.setBreakpoint', {location: {scriptId: '14', lineNumber: 31}});

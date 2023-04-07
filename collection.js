@@ -17,14 +17,7 @@ const puppeteer = require('puppeteer');
 const util = require('node:util');
 var fs = require('fs');
 
-count = 0;
-var lastScriptLoadedTime = new Date().getTime() / 1000;
-var breakpointIDsToLines = {};
-var scriptIDsToURLs = {};
-var columns = [];
 
-var executed_lines = [];
-var variable_values = [];
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -38,32 +31,17 @@ function contains(array, element) {
   return false;
 }
 
-async function set_breakpoints(session, breakpoints) {
-  console.log("setting " + breakpoints.length + " breakpoints.");
-  for (var i = 0; i < breakpoints.length; i++) {
-    var location = breakpoints[i];
-    var scriptId = location.scriptId;
-    var lineNumber = location.lineNumber;
-    var columnNumber = location.columnNumber;
-    try {
-      
-      //console.log("setting breakpoint at " + scriptId + " " + lineNumber + " " + columnNumber);
-      var breakpoint = await session.send('Debugger.setBreakpoint', {location: {scriptId: scriptId, lineNumber: lineNumber, columnNumber: columnNumber}});
-      var breakpointLocation = breakpoint.actualLocation;
-      breakpointLocation.script = scriptIDsToURLs[scriptId];
-      breakpointIDsToLines[breakpoint.breakpointId] = breakpointLocation
-      //console.log(scriptIDsToURLs[scriptId]);
-      //if (scriptIDsToURLs[scriptId] === "http://localhost:1234/test.js" ) {
-        columns.push(lineNumber + " " + columnNumber);
-      //}
-    } catch(err) {
-      //console.log(err);
-    }
-  }
-  console.log("Finished setting breakpoints!");
-}
 
-(async() => {
+
+async function collect(url) {
+  count = 0;
+  var lastScriptLoadedTime = new Date().getTime() / 1000;
+  var breakpointIDsToLines = {};
+  var scriptIDsToURLs = {};
+  var columns = [];
+
+  var executed_lines = [];
+  var variable_values = [];
   // Use Puppeteer to launch a browser and open a page. For some reason doesn't work in a sandbox
   const browser = await puppeteer.launch({headless: false, args:['--no-sandbox']});
   
@@ -71,12 +49,39 @@ async function set_breakpoints(session, breakpoints) {
   const session = await page.target().createCDPSession();
   // Get all the breakpoints
   var all_breakpoints = []
-  await page.goto('https://alfagroup.csail.mit.edu/');
-  //await page.goto('http://localhost:1234');
+  //await page.goto('https://alfagroup.csail.mit.edu/');
+  await page.goto(url);
+  async function set_breakpoints(session, breakpoints) {
+    console.log("setting " + breakpoints.length + " breakpoints.");
+    for (var i = 0; i < breakpoints.length; i++) {
+      var location = breakpoints[i];
+      var scriptId = location.scriptId;
+      var lineNumber = location.lineNumber;
+      var columnNumber = location.columnNumber;
+      try {
+        
+        //console.log("setting breakpoint at " + scriptId + " " + lineNumber + " " + columnNumber);
+        var breakpoint = await session.send('Debugger.setBreakpoint', {location: {scriptId: scriptId, lineNumber: lineNumber, columnNumber: columnNumber}});
+        var breakpointLocation = breakpoint.actualLocation;
+        breakpointLocation.script = scriptIDsToURLs[scriptId];
+        breakpointLocation.scriptId = scriptId;
+        breakpointIDsToLines[breakpoint.breakpointId] = breakpointLocation
+        //console.log(scriptIDsToURLs[scriptId]);
+        //if (scriptIDsToURLs[scriptId] === "http://localhost:1234/test.js" ) {
+          columns.push(lineNumber + " " + columnNumber);
+        //}
+      } catch(err) {
+        //console.log(err);
+      }
+    }
+    console.log("Finished setting breakpoints!");
+  }
 
   async function getAllBreakpoints(x) {
     lastScriptLoadedTime = new Date().getTime() / 1000;
     scriptIDsToURLs[x.scriptId] = x.url;
+    var script = await session.send("Debugger.getScriptSource", {scriptId: x.scriptId});
+    fs.writeFileSync(`/tmp/scripts/${x.scriptId}`, script.scriptSource);
     const breakpoints = await session.send("Debugger.getPossibleBreakpoints", {start: {scriptId: x.scriptId, lineNumber: 0}});
     all_breakpoints = all_breakpoints.concat(breakpoints.locations);
   }
@@ -86,10 +91,10 @@ async function set_breakpoints(session, breakpoints) {
       await session.send("Debugger.resume");
       return;
     }
-    //console.log("called");
+
     //debugger has an array of callframes. hardcoded to get the first one.
     var breakpoint = breakpointIDsToLines[x.hitBreakpoints[0]];
-    var line_called = {"file": breakpoint.script, "line": breakpoint.lineNumber, "column": breakpoint.columnNumber};
+    var line_called = {"file": breakpoint.script, "scriptId": breakpoint.scriptId, "line": breakpoint.lineNumber, "column": breakpoint.columnNumber};
     executed_lines.push(line_called);
     var variableBindings = {};
     for (var i = 0; i < x.callFrames.length; i++) {
@@ -116,7 +121,15 @@ async function set_breakpoints(session, breakpoints) {
               var heapObjectId = await session.send("HeapProfiler.getHeapObjectId", {objectId: obj.value.objectId});
               objDetails["type"] = "object";
               objDetails["heapLocation"] = heapObjectId.heapSnapshotObjectId;
-              //var properties = await session.send("Runtime.getProperties", {objectId: obj.value.objectId});
+              var properties = await session.send("Runtime.getProperties", {objectId: obj.value.objectId});
+              propertiesResults = {}
+              for (index in properties.result) {
+                var property = properties.result[index];
+                if (property.value && property.value.type !== "function") {
+                  propertiesResults[property.name] = property.value.value;
+                }
+              }
+              objDetails["fields"] = propertiesResults;
               //console.log(obj.name, heapObjectId.heapSnapshotObjectId, breakpoint.script, breakpoint.lineNumber, breakpoint.columnNumber, x.hitBreakpoints[0]);
             } else if(obj.value.type === "undefined") {
               objDetails["type"] = "undefined";
@@ -139,15 +152,11 @@ async function set_breakpoints(session, breakpoints) {
     }
   }
   
-  
-  
   session.on('Debugger.scriptParsed', getAllBreakpoints);
   session.on('Debugger.paused' , getVars);
   
- 
-  
   const debugger_enabled = await session.send('Debugger.enable');
-  //const runtime_enabled = session.send('Runtime.enable'); // not sure if we need to comment this out
+  const runtime_enabled = await session.send('Runtime.enable'); // not sure if we need to comment this out
   await session.send("HeapProfiler.enable");
   await session.send("HeapProfiler.startTrackingHeapObjects", {trackAllocations: true})
   await sleep(2000);
@@ -158,37 +167,25 @@ async function set_breakpoints(session, breakpoints) {
     }
     
   }
-  /*
-  all_breakpoints = all_breakpoints.filter((value, index, self) =>
-  index === self.findIndex((t) => (
-    value.scriptId === t.scriptId && value.lineNumber === t.lineNumber && value.columnNumber === t.columnNumber
-  ))
-  )
-  console.log(all_breakpoints.length + " after filtering");
-  */
-  await set_breakpoints(session, all_breakpoints);
-  //console.log(all_breakpoints[1].locations[0]);
-  //const breakpoint = await session.send('Debugger.setBreakpoint', {location: {scriptId: '14', lineNumber: 31}});
-  //console.log(breakpoint);
   
-  //await browser.close();
-
-})();
-
-function saveFiles() {
-  /*
-  var linesCalledFile = fs.createWriteStream("/tmp/linesCalled.jsonl");
-  executed_lines.forEach(function(v) { linesCalledFile.write(v + '\n'); });
-  linesCalledFile.close();
-  */
+  await set_breakpoints(session, all_breakpoints);
+  await sleep(1000);
+  
+  let buttons = await page.$$('button');
+  buttons[0].click();
+  await sleep(2000);
+  await browser.close();
   fs.writeFileSync('/tmp/linesCalled.jsonl', JSON.stringify(executed_lines, null, 2) , 'utf-8');
-  /*
-  var variableBindingsFile = fs.createWriteStream("/tmp/variableMappings.jsonl");
-  variable_values.forEach(function(v) { variableBindingsFile.write(v + '\n'); });
-  variableBindingsFile.close();
-  */
   fs.writeFileSync('/tmp/variableMappings.jsonl', JSON.stringify(variable_values, null, 2) , 'utf-8');
+  
+}
+
+collect("http://localhost:1234");
+function saveFiles() {
+  fs.writeFileSync('/tmp/linesCalled.jsonl', JSON.stringify(executed_lines, null, 2) , 'utf-8');
+  fs.writeFileSync('/tmp/variableMappings.jsonl', JSON.stringify(variable_values, null, 2) , 'utf-8');
+
   console.log(executed_lines.length, variable_values.length);
 }
 
-process.on('exit', saveFiles.bind(null, {cleanup:true}));
+//process.on('exit', saveFiles.bind(null, {cleanup:true}));

@@ -32,16 +32,20 @@ function contains(array, element) {
 }
 
 
-
-async function collect(url) {
+var executed_lines = [];
+var variable_values = [];
+async function collect(url, outputDirectory) {
+  console.log("collecting");
+  if (!fs.existsSync(outputDirectory)){
+    fs.mkdirSync(outputDirectory);
+  }
   count = 0;
   var lastScriptLoadedTime = new Date().getTime() / 1000;
   var breakpointIDsToLines = {};
   var scriptIDsToURLs = {};
   var columns = [];
 
-  var executed_lines = [];
-  var variable_values = [];
+  
   // Use Puppeteer to launch a browser and open a page. For some reason doesn't work in a sandbox
   const browser = await puppeteer.launch({headless: false, args:['--no-sandbox']});
   
@@ -59,9 +63,13 @@ async function collect(url) {
       var lineNumber = location.lineNumber;
       var columnNumber = location.columnNumber;
       try {
-        
-        //console.log("setting breakpoint at " + scriptId + " " + lineNumber + " " + columnNumber);
+        if (scriptIDsToURLs[scriptId] === "__puppeteer_evaluation_script__") {
+          continue;
+        } 
+        //console.log("setting breakpoint");
+        console.log("setting breakpoint at " + scriptIDsToURLs[scriptId] + " " + lineNumber + " " + columnNumber);
         var breakpoint = await session.send('Debugger.setBreakpoint', {location: {scriptId: scriptId, lineNumber: lineNumber, columnNumber: columnNumber}});
+        console.log("breakpoint set");
         var breakpointLocation = breakpoint.actualLocation;
         breakpointLocation.script = scriptIDsToURLs[scriptId];
         breakpointLocation.scriptId = scriptId;
@@ -80,8 +88,9 @@ async function collect(url) {
   async function getAllBreakpoints(x) {
     lastScriptLoadedTime = new Date().getTime() / 1000;
     scriptIDsToURLs[x.scriptId] = x.url;
+    console.log("got script " + x.url);
     var script = await session.send("Debugger.getScriptSource", {scriptId: x.scriptId});
-    fs.writeFileSync(`/tmp/scripts/${x.scriptId}`, script.scriptSource);
+    fs.writeFileSync(`${outputDirectory}/${x.scriptId}`, script.scriptSource);
     const breakpoints = await session.send("Debugger.getPossibleBreakpoints", {start: {scriptId: x.scriptId, lineNumber: 0}});
     all_breakpoints = all_breakpoints.concat(breakpoints.locations);
   }
@@ -153,15 +162,21 @@ async function collect(url) {
   }
   
   session.on('Debugger.scriptParsed', getAllBreakpoints);
-  session.on('Debugger.paused' , getVars);
-  
   const debugger_enabled = await session.send('Debugger.enable');
-  const runtime_enabled = await session.send('Runtime.enable'); // not sure if we need to comment this out
+  
+  session.on('Debugger.paused' , getVars);
+  console.log("here1");
+
+  console.log("here2");
+  //const runtime_enabled = await session.send('Runtime.enable'); // not sure if we need to comment this out
   await session.send("HeapProfiler.enable");
+  console.log("here3");
   await session.send("HeapProfiler.startTrackingHeapObjects", {trackAllocations: true})
+  console.log("here4");
   await sleep(2000);
   while (true) {
     await sleep(2000);
+    console.log("here");
     if (new Date().getTime() / 1000 - lastScriptLoadedTime > 5) {
       break;
     }
@@ -171,16 +186,22 @@ async function collect(url) {
   await set_breakpoints(session, all_breakpoints);
   await sleep(1000);
   
+  /*
   let buttons = await page.$$('button');
   buttons[0].click();
+  */
   await sleep(2000);
-  await browser.close();
-  fs.writeFileSync('/tmp/linesCalled.jsonl', JSON.stringify(executed_lines, null, 2) , 'utf-8');
-  fs.writeFileSync('/tmp/variableMappings.jsonl', JSON.stringify(variable_values, null, 2) , 'utf-8');
+  //await browser.close();
+  fs.writeFileSync(`${outputDirectory}/linesCalled.jsonl`, JSON.stringify(executed_lines, null, 2) , 'utf-8');
+  fs.writeFileSync(`${outputDirectory}/variableMappings.jsonl`, JSON.stringify(variable_values, null, 2) , 'utf-8');
   
 }
+async function run() {
 
-collect("http://localhost:1234");
+
+await collect("http://alfagroup.csail.mit.edu", "/tmp/alfa");
+//await collect("http://localhost:1234", "/tmp/local2");
+}
 function saveFiles() {
   fs.writeFileSync('/tmp/linesCalled.jsonl', JSON.stringify(executed_lines, null, 2) , 'utf-8');
   fs.writeFileSync('/tmp/variableMappings.jsonl', JSON.stringify(variable_values, null, 2) , 'utf-8');
@@ -188,4 +209,6 @@ function saveFiles() {
   console.log(executed_lines.length, variable_values.length);
 }
 
-//process.on('exit', saveFiles.bind(null, {cleanup:true}));
+process.on('exit', saveFiles.bind(null, {cleanup:true}));
+process.on('uncaughtException', saveFiles.bind(null, {cleanup:true}));
+run();

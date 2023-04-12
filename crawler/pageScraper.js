@@ -3,12 +3,14 @@ function sleep(ms) {
   }
 
 const scraperObject = {
-	url: 'https://www.google.com/',
-	async scraper(browser){
+	async scraper(page, url){
+		/*
 		let page = await browser.newPage();
 		var hostDomain = new URL(this.url);
 		console.log(`Navigating to ${this.url}...`);
 		await page.goto(this.url, {waitUntil: "networkidle2"});
+		*/
+		var hostDomain = new URL(url);
 		// Get all links
 		let urls = await page.$$eval('a', links => {
 			links = links.map(el => el.href)
@@ -25,7 +27,7 @@ const scraperObject = {
         //buttons[0].click();
 		var urlTest = new RegExp('^(?:[a-z+]+:)?//', 'i');
 		var links = await page.$$('a');
-		for (var i = 0; i < 10; i++) {
+		for (var i = 0; i < 5; i++) {
 			console.log("visiting new page");
 			if (links.length > 0 ) {
 				await sleep(1000);
@@ -37,12 +39,12 @@ const scraperObject = {
 					var href2 = await href.jsonValue();
 					if (urlTest.test(href2)) {
 						var domain = new URL(href2);
-						//console.log(domain.hostname, hostDomain.hostname);
-						if (domain.hostname === hostDomain.hostname) {
+						console.log(domain.hostname, hostDomain.hostname);
+						if (domain.hostname === hostDomain.hostname || domain.hostname.endsWith(hostDomain.hostname)) {
 							console.log("found hostname that matches");
 							break;
 						}
-					} else {
+					} else if (href2.startsWith("/")) {
 						//it's a relative URL
 						break;
 					}

@@ -55,62 +55,19 @@ async function collect(url, outputDirectory) {
   // Get all the breakpoints
   var all_breakpoints = []
   //await page.goto('https://alfagroup.csail.mit.edu/');
-  await page.goto(url);
-  async function set_breakpoints(session, breakpoints) {
-    console.log("setting " + breakpoints.length + " breakpoints.");
-    for (var i = 0; i < breakpoints.length; i++) {
-      var location = breakpoints[i];
-      var scriptId = location.scriptId;
-      var lineNumber = location.lineNumber;
-      var columnNumber = location.columnNumber;
-      try {
-        if (scriptIDsToURLs[scriptId] === "__puppeteer_evaluation_script__") {
-          continue;
-        } 
-        //console.log("setting breakpoint");
-        console.log("setting breakpoint at " + scriptIDsToURLs[scriptId] + " " + lineNumber + " " + columnNumber);
-        var breakpoint = await session.send('Debugger.setBreakpoint', {location: {scriptId: scriptId, lineNumber: lineNumber, columnNumber: columnNumber}});
-        //console.log("breakpoint set");
-        var breakpointLocation = breakpoint.actualLocation;
-        breakpointLocation.script = scriptIDsToURLs[scriptId];
-        breakpointLocation.scriptId = scriptId;
-        breakpointIDsToLines[breakpoint.breakpointId] = breakpointLocation
-        //console.log(scriptIDsToURLs[scriptId]);
-        //if (scriptIDsToURLs[scriptId] === "http://localhost:1234/test.js" ) {
-          columns.push(lineNumber + " " + columnNumber);
-        //}
-      } catch(err) {
-        //console.log(err);
-      }
-    }
-    console.log("Finished setting breakpoints!");
-  }
-
-  async function getAllBreakpoints(x) {
-    lastScriptLoadedTime = new Date().getTime() / 1000;
-    scriptIDsToURLs[x.scriptId] = x.url;
-    //console.log("got script " + x.url);
-    try {
-      var script = await session.send("Debugger.getScriptSource", {scriptId: x.scriptId});
-      fs.writeFileSync(`${outputDirectory}/${x.scriptId}`, script.scriptSource);
-      const breakpoints = await session.send("Debugger.getPossibleBreakpoints", {start: {scriptId: x.scriptId, lineNumber: 0}});
-      //all_breakpoints = all_breakpoints.concat(breakpoints.locations);
-      set_breakpoints(session, breakpoints.locations);
-    } catch(error) {
-      console.log(x.scriptId + " " + x.url + " doesn't exist anymore");
-    }
-  }
-
+  
+ 
   async function getVars(x) {
-    console.log("hit breakpoint!");
-    if (x.hitBreakpoints === undefined) {
-      await session.send("Debugger.resume");
+    //console.log("hit breakpoint!");
+    if (x.callFrames[0].url === "__puppeteer_evaluation_script__") {
+      await session.send("Debugger.stepInto");
       return;
+      
     }
-
-    //debugger has an array of callframes. hardcoded to get the first one.
-    var breakpoint = breakpointIDsToLines[x.hitBreakpoints[0]];
-    var line_called = {"file": breakpoint.script, "scriptId": breakpoint.scriptId, "line": breakpoint.lineNumber, "column": breakpoint.columnNumber};
+    var location = x.callFrames[0].location
+    var url = x.callFrames[0].url;
+    
+    var line_called = {"file": url, "scriptId": location.scriptId, "line": location.lineNumber, "column": location.columnNumber};
     executed_lines.push(line_called);
     var variableBindings = {};
     for (var i = 0; i < x.callFrames.length; i++) {
@@ -133,7 +90,8 @@ async function collect(url, outputDirectory) {
           obj = objects.result[k];
           if (obj.value !== undefined && obj.value.type !== "function") {
             var objDetails = {};
-            if (obj.value.type === 'object') {
+            if (obj.value.type === 'object' && obj.value.objectId !== undefined) {
+              //console.log(obj.value.objectId);
               var heapObjectId = await session.send("HeapProfiler.getHeapObjectId", {objectId: obj.value.objectId});
               objDetails["type"] = "object";
               objDetails["heapLocation"] = heapObjectId.heapSnapshotObjectId;
@@ -162,46 +120,32 @@ async function collect(url, outputDirectory) {
       }
     }
     variable_values.push(variableBindings);
+    
     if (true) {
-      await session.send("Debugger.resume");
+      await session.send("Debugger.stepInto");
       count = count+1;
     }
   }
   
-  session.on('Debugger.scriptParsed', getAllBreakpoints);
   const debugger_enabled = await session.send('Debugger.enable');
   
   session.on('Debugger.paused' , getVars);
-  console.log("here1");
-
-  console.log("here2");
-  //const runtime_enabled = await session.send('Runtime.enable'); // not sure if we need to comment this out
   
   
   
   await sleep(2000);
-  /*
-  while (true) {
-    await sleep(2000);
-    console.log("here");
-    if (new Date().getTime() / 1000 - lastScriptLoadedTime > 5) {
-      break;
-    }
-    
-  }
-  */
-  //await set_breakpoints(session, all_breakpoints);
   await session.send("HeapProfiler.enable");
   console.log("here3");
   await session.send("HeapProfiler.startTrackingHeapObjects", {trackAllocations: true})
   console.log("here4");
   await sleep(1000);
   
-  /*
-  let buttons = await page.$$('button');
-  buttons[0].click();
-  */
-  await crawl.scrapeAll(url, page);
+  await session.send("Debugger.pause");
+  await page.goto(url, {timeout: 300});
+
+
+  //let buttons = await page.$$('button');
+  //buttons[0].click();
   await sleep(2000);
   await browser.close();
   fs.writeFileSync(`${outputDirectory}/linesCalled.jsonl`, JSON.stringify(executed_lines, null, 2) , 'utf-8');
@@ -210,8 +154,8 @@ async function collect(url, outputDirectory) {
   
 }
 async function run() {
-  //await collect("http://www.yahoo.com", "/tmp/yahoo");
-  await collect("http://localhost:1234", "/tmp/local3");
+  await collect("https://alfagroup.csail.mit.edu/", "/tmp/alfa");
+  //await collect("http://localhost:1234", "/tmp/local4");
 
 }
 function saveFiles() {
@@ -223,6 +167,6 @@ function saveFiles() {
 }
 
 process.on('exit', saveFiles.bind(null, {cleanup:true}));
-process.on('uncaughtException', saveFiles.bind(null, {cleanup:true}));
+//process.on('uncaughtException', saveFiles.bind(null, {cleanup:true}));
 run();
 

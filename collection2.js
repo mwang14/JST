@@ -17,6 +17,7 @@ const puppeteer = require('puppeteer');
 const util = require('node:util');
 var fs = require('fs');
 const crawl = require("./crawler/crawl");
+var path = require('path');
 
 
 function sleep(ms) {
@@ -62,69 +63,81 @@ async function collect(url, outputDirectory) {
     if (x.callFrames[0].url === "__puppeteer_evaluation_script__") {
       await session.send("Debugger.stepInto");
       return;
-      
     }
-    var location = x.callFrames[0].location
-    var url = x.callFrames[0].url;
-    
-    var line_called = {"file": url, "scriptId": location.scriptId, "line": location.lineNumber, "column": location.columnNumber};
-    executed_lines.push(line_called);
-    var variableBindings = {};
-    for (var i = 0; i < x.callFrames.length; i++) {
-      let callFrame = x.callFrames[i];
-      // each callframe can have multiple scopes, which are returned as an array. 
-      for (var j = 0; j < callFrame.scopeChain.length; j++) {
-        
-        let scope = callFrame.scopeChain[j]
-        if (scope.type !== 'local') {
-          continue;
-        }
-        
-        //scope.object is the object representing that scope. For local, it contains the variables in that scope. Get the objectId for the scope
-        let objId = scope.object.objectId;
-        // get the properties from the runtime, which will return the variable values.
-        var objects = await session.send("Runtime.getProperties", {objectId: objId});
-        
-        for (var k = 0; k < objects.result.length; k++) {
+    try {
+      var location = x.callFrames[0].location
+      var url = x.callFrames[0].url;
+      var outputScriptPath = path.join(outputDirectory, location.scriptId);
+      if (!fs.existsSync(outputScriptPath)) {
+        var script = await session.send("Debugger.getScriptSource", {scriptId: location.scriptId});
+        fs.writeFileSync(outputScriptPath, script.scriptSource);
+      }
+      var line_called = {"file": url, "scriptId": location.scriptId, "line": location.lineNumber, "column": location.columnNumber};
+      executed_lines.push(line_called);
+      var variableBindings = {};
+      for (var i = 0; i < x.callFrames.length; i++) {
+        let callFrame = x.callFrames[i];
+        // each callframe can have multiple scopes, which are returned as an array. 
+        for (var j = 0; j < callFrame.scopeChain.length; j++) {
           
-          obj = objects.result[k];
-          if (obj.value !== undefined && obj.value.type !== "function") {
-            var objDetails = {};
-            if (obj.value.type === 'object' && obj.value.objectId !== undefined) {
-              //console.log(obj.value.objectId);
-              var heapObjectId = await session.send("HeapProfiler.getHeapObjectId", {objectId: obj.value.objectId});
-              objDetails["type"] = "object";
-              objDetails["heapLocation"] = heapObjectId.heapSnapshotObjectId;
-              var properties = await session.send("Runtime.getProperties", {objectId: obj.value.objectId});
-              propertiesResults = {}
-              for (index in properties.result) {
-                var property = properties.result[index];
-                if (property.value && property.value.type !== "function") {
-                  propertiesResults[property.name] = property.value.value;
-                }
-              }
-              objDetails["fields"] = propertiesResults;
-              //console.log(obj.name, heapObjectId.heapSnapshotObjectId, breakpoint.script, breakpoint.lineNumber, breakpoint.columnNumber, x.hitBreakpoints[0]);
-            } else if(obj.value.type === "undefined") {
-              objDetails["type"] = "undefined";
-              //console.log(obj.name, 'undefined');
-            } else  {
-              objDetails["type"] = obj.value.type;
-              objDetails["value"] = obj.value.value;
-              //console.log(obj.name, obj.value.value);
-            }
-            variableBindings[obj.name] = objDetails;
+          let scope = callFrame.scopeChain[j]
+          if (scope.type !== 'local') {
+            continue;
           }
           
+          //scope.object is the object representing that scope. For local, it contains the variables in that scope. Get the objectId for the scope
+          let objId = scope.object.objectId;
+          // get the properties from the runtime, which will return the variable values.
+          var objects = await session.send("Runtime.getProperties", {objectId: objId});
+          
+          for (var k = 0; k < objects.result.length; k++) {
+            
+            obj = objects.result[k];
+            if (obj.value !== undefined && obj.value.type !== "function") {
+              var objDetails = {};
+              if (obj.value.type === 'object' && obj.value.objectId !== undefined) {
+                //console.log(obj.value.objectId);
+                // TODO: Because we don't crash until this line once the browser closes, we have an extra item in executed_lines since that's already pushed.
+                var heapObjectId = await session.send("HeapProfiler.getHeapObjectId", {objectId: obj.value.objectId});
+                objDetails["type"] = "object";
+                if (obj.value.subtype !== undefined) {
+                  objDetails["subtype"] = obj.value.subtype;
+                }
+                objDetails["className"] = obj.value.className;
+                objDetails["heapLocation"] = heapObjectId.heapSnapshotObjectId;
+                var properties = await session.send("Runtime.getProperties", {objectId: obj.value.objectId});
+                propertiesResults = {}
+                for (index in properties.result) {
+                  var property = properties.result[index];
+                  if (property.value && property.value.type !== "function") {
+                    propertiesResults[property.name] = property.value.value;
+                  }
+                }
+                objDetails["fields"] = propertiesResults;
+                //console.log(obj.name, heapObjectId.heapSnapshotObjectId, breakpoint.script, breakpoint.lineNumber, breakpoint.columnNumber, x.hitBreakpoints[0]);
+              } else if(obj.value.type === "undefined") {
+                objDetails["type"] = "undefined";
+                //console.log(obj.name, 'undefined');
+              } else  {
+                objDetails["type"] = obj.value.type;
+                objDetails["value"] = obj.value.value;
+                //console.log(obj.name, obj.value.value);
+              }
+              variableBindings[obj.name] = objDetails;
+            }
+            
+          }
         }
       }
-    }
-    variable_values.push(variableBindings);
-    
-    if (true) {
-      await session.send("Debugger.stepInto");
-      count = count+1;
-    }
+      variable_values.push(variableBindings);
+      
+      if (true) {
+        await session.send("Debugger.stepInto");
+        count = count+1;
+      }
+  } catch(error) {
+    console.log(error);
+  }
   }
   
   const debugger_enabled = await session.send('Debugger.enable');
@@ -141,21 +154,32 @@ async function collect(url, outputDirectory) {
   await sleep(1000);
   
   await session.send("Debugger.pause");
-  await page.goto(url, {timeout: 300});
+  try {
+    await page.goto(url, {timeout: 100000});
+  } catch(error){
+    console.log("timed out");
+  }
 
 
   //let buttons = await page.$$('button');
   //buttons[0].click();
-  await sleep(2000);
+  await sleep(5000);
   await browser.close();
+  var result = {};
+  result["executedLines"] = executed_lines;
+  result["variableMappings"] = variable_values;
+  /*
   fs.writeFileSync(`${outputDirectory}/linesCalled.jsonl`, JSON.stringify(executed_lines, null, 2) , 'utf-8');
   fs.writeFileSync(`${outputDirectory}/variableMappings.jsonl`, JSON.stringify(variable_values, null, 2) , 'utf-8');
+  */
+  fs.writeFileSync(`${outputDirectory}/data.json`, JSON.stringify(result, null, 2) , 'utf-8');
   console.log(executed_lines.length, variable_values.length);
   
 }
-async function run() {
-  await collect("https://alfagroup.csail.mit.edu/", "/tmp/alfa");
-  //await collect("http://localhost:1234", "/tmp/local4");
+async function run(website, path) {
+  //await collect("https://alfagroup.csail.mit.edu/", "/tmp/alfa");
+  console.log("Running on " + website + " and saving to " + path);
+  await collect(website, path);
 
 }
 function saveFiles() {
@@ -166,7 +190,7 @@ function saveFiles() {
   console.log(executed_lines.length, variable_values.length);
 }
 
-process.on('exit', saveFiles.bind(null, {cleanup:true}));
+//process.on('exit', saveFiles.bind(null, {cleanup:true}));
 //process.on('uncaughtException', saveFiles.bind(null, {cleanup:true}));
-run();
+run(process.argv[2], process.argv[3]);
 

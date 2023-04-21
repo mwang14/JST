@@ -49,7 +49,7 @@ async function collect(url, outputDirectory) {
 
   
   // Use Puppeteer to launch a browser and open a page. For some reason doesn't work in a sandbox
-  const browser = await puppeteer.launch({headless: false, args:['--no-sandbox']});
+  const browser = await puppeteer.launch({headless: true, args:['--no-sandbox']});
   
   const page = await browser.newPage();
   const session = await page.target().createCDPSession();

@@ -183,7 +183,7 @@ async function collect(url, outputDirectory) {
   
   await session.send("Debugger.pause");
   try {
-    await page.goto(url, {timeout: 300000});
+    await page.goto(url, {timeout: 600000});
   } catch(error){
     console.log("timed out");
   }

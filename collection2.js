@@ -57,6 +57,8 @@ async function collect(url, outputDirectory) {
   var all_breakpoints = []
   //await page.goto('https://alfagroup.csail.mit.edu/');
   
+  var scriptSources = {};
+  var foundVariables = []
  
   async function getVars(x) {
     //console.log("hit breakpoint!");
@@ -66,14 +68,18 @@ async function collect(url, outputDirectory) {
     }
     try {
       var location = x.callFrames[0].location
+      //console.log(location)
       var url = x.callFrames[0].url;
+      //console.log(x.callFrames[0]);
       var outputScriptPath = path.join(outputDirectory, location.scriptId);
       if (!fs.existsSync(outputScriptPath)) {
         var script = await session.send("Debugger.getScriptSource", {scriptId: location.scriptId});
+        scriptSources[location.scriptId] = script.scriptSource;
+        //console.log(script.scriptSource.split('\n')[location.lineNumber].length);
+        //console.log(x.callFrames.length);
         fs.writeFileSync(outputScriptPath, script.scriptSource);
       }
       var line_called = {"file": url, "scriptId": location.scriptId, "line": location.lineNumber, "column": location.columnNumber};
-      executed_lines.push(line_called);
       var variableBindings = {};
       for (var i = 0; i < x.callFrames.length; i++) {
         let callFrame = x.callFrames[i];
@@ -81,10 +87,10 @@ async function collect(url, outputDirectory) {
         for (var j = 0; j < callFrame.scopeChain.length; j++) {
           
           let scope = callFrame.scopeChain[j]
-          if (scope.type !== 'local') {
-            continue;
-          }
-          
+          //if (scope.type !== 'local') {
+          //  continue;
+          //}
+          //console.log("not local " + scope.type);
           //scope.object is the object representing that scope. For local, it contains the variables in that scope. Get the objectId for the scope
           let objId = scope.object.objectId;
           // get the properties from the runtime, which will return the variable values.
@@ -93,7 +99,18 @@ async function collect(url, outputDirectory) {
           for (var k = 0; k < objects.result.length; k++) {
             
             obj = objects.result[k];
+            if (scope.type === 'global') {
+              if (!(foundVariables.includes(obj.name) || scriptSources[location.scriptId].includes(obj.name))) {
+                continue;
+              }
+            }
+            foundVariables.push(obj.name);
             if (obj.value !== undefined && obj.value.type !== "function") {
+              /*
+              if (obj.name === "aPageStart") {
+                console.log(obj);
+              }
+              */
               var objDetails = {};
               if (obj.value.type === 'object' && obj.value.objectId !== undefined) {
                 //console.log(obj.value.objectId);
@@ -103,6 +120,7 @@ async function collect(url, outputDirectory) {
                 if (obj.value.subtype !== undefined) {
                   objDetails["subtype"] = obj.value.subtype;
                 }
+                //console.log(obj.value.type + " : " + obj.value.className + " : " + obj.value.description);
                 objDetails["className"] = obj.value.className;
                 objDetails["heapLocation"] = heapObjectId.heapSnapshotObjectId;
                 var properties = await session.send("Runtime.getProperties", {objectId: obj.value.objectId});
@@ -124,11 +142,13 @@ async function collect(url, outputDirectory) {
                 //console.log(obj.name, obj.value.value);
               }
               variableBindings[obj.name] = objDetails;
+              //console.log(obj.value.type + " : " + obj.value.objectId);
             }
             
           }
         }
       }
+      executed_lines.push(line_called);
       variable_values.push(variableBindings);
       
       if (true) {
@@ -140,22 +160,30 @@ async function collect(url, outputDirectory) {
   }
   }
   
+  var scriptMetadata = {};
+  async function scriptParsed(x) {
+    //console.log(x.scriptId + " has been parsed, url is " + x.url);
+    //console.log(x.startLine + " " + x.startColumn);
+    scriptMetadata[x.scriptId] = {};
+    scriptMetadata[x.scriptId]["startLine"] = x.startLine;
+    scriptMetadata[x.scriptId]["startColumn"] = x.startColumn;
+  }
   const debugger_enabled = await session.send('Debugger.enable');
   
   session.on('Debugger.paused' , getVars);
-  
+  session.on('Debugger.scriptParsed', scriptParsed);
   
   
   await sleep(2000);
   await session.send("HeapProfiler.enable");
-  console.log("here3");
+  //console.log("here3");
   await session.send("HeapProfiler.startTrackingHeapObjects", {trackAllocations: true})
-  console.log("here4");
+  //console.log("here4");
   await sleep(1000);
   
   await session.send("Debugger.pause");
   try {
-    await page.goto(url, {timeout: 100000});
+    await page.goto(url, {timeout: 300000});
   } catch(error){
     console.log("timed out");
   }
@@ -173,6 +201,7 @@ async function collect(url, outputDirectory) {
   fs.writeFileSync(`${outputDirectory}/variableMappings.jsonl`, JSON.stringify(variable_values, null, 2) , 'utf-8');
   */
   fs.writeFileSync(`${outputDirectory}/data.json`, JSON.stringify(result, null, 2) , 'utf-8');
+  fs.writeFileSync(`${outputDirectory}/scriptMetadata.json`, JSON.stringify(scriptMetadata, null, 2) , 'utf-8');
   console.log(executed_lines.length, variable_values.length);
   
 }

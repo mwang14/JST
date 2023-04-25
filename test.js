@@ -1,14 +1,9 @@
 const util = require('node:util');
 var fs = require('fs');
+var path = require('path')
 
-arr = [{a: 1, b: 2},{a:1, b:3}, {a: 1, b: 2}]
+var arr = {a: 1, b: 2};
 
-
-arr = arr.filter((value, index, self) =>
-  index === self.findIndex((t) => (
-    util.isDeepStrictEqual(value, t)
-  ))
-)
 
 function test(dict) {
   dict.blah = 5;
@@ -20,4 +15,4 @@ function isSubdomain(domain1, domain2) {
   return domain1.endsWith(domain2);
 }
 
-console.log(isSubdomain("hr.ikipedia.org", "www.wikipedia.org"));
+fs.writeFileSync("/tmp/blah", JSON.stringify(arr, null, 2) , 'utf-8');

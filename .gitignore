@@ -14,3 +14,4 @@ yarn.lock
 /lib/protocol.d.ts
 /utils/browser/puppeteer-web.js
 /index.d.ts
+data

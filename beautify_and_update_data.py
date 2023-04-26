@@ -43,24 +43,6 @@ def get_beautifier_opts():
     opts.indent_size = 4
     return opts
 
-def get_all_strings(s):
-    toret = {}
-    stack = []
-    to_ret_array = []
-    for i, c in enumerate(s):
-        if c in ["'", '"', "`"] and s[i-1] != '\\':
-            if stack:
-                # this single-quote is close character
-                toret[stack.pop()] = i
-            else:
-                # a new quote started
-                stack.append(i)
-        else:
-            # ignore it
-            pass
-    for start, end in toret.items():
-        to_ret_array.append((start,end))
-    return to_ret_array
 
 def inside_indices(i, indices):
     for start,end in indices:
@@ -68,21 +50,6 @@ def inside_indices(i, indices):
             return True
     return False
 
-def manual_split(s, split_char):
-    string_indices = get_all_strings(s)
-    statements = []
-    statement = ""
-    for i,c in enumerate(s):
-        if c == split_char:
-            if not inside_indices(i, string_indices):
-                statement += c
-                statements.append(statement)
-                statement = ""
-            else:
-                statement += c
-        else:
-            statement += c
-    return statements
 
 def contains_all_characters(s1, s2):
     for char in s1:
@@ -102,16 +69,22 @@ def beautified_lines_to_indices(js_content, js_content_beautified):
         while not contains_all_characters(line, js_content[prev_index:cur_index]):
             cur_index += 1
         results[(prev_index, cur_index)] = i
-        #print(line, "###", js_content[prev_index:cur_index])
+        #print(i, line, "###", js_content[prev_index:cur_index])
         prev_index = cur_index
-
+    #print(results)
     return results
 
 def get_line_for_index(indices_to_lines, index):
+    largest = 0
+    largest_start_line = 0
     for start, end in indices_to_lines:
+        if end >= largest:
+            largest = end
+            largest_start_line = start
         if index >= start and index <= end:
             return indices_to_lines[(start,end)]
-        
+    if index >= end:
+        return indices_to_lines[(largest_start_line, largest)]
     return None
 
 
@@ -135,6 +108,8 @@ if __name__ == "__main__":
     os.makedirs(os.path.join(collected_data_dir, "beautified"), exist_ok=True)
     for line in tqdm.tqdm(data["executedLines"]):
         scriptId = line["scriptId"]
+        #if scriptId != "14":
+        #    continue
         line_number = line["line"]
         column = line["column"]
         start_column = metadata[scriptId]["startColumn"]
@@ -146,7 +121,6 @@ if __name__ == "__main__":
             scriptData[scriptId] = {}
             with open(scriptPath, 'r') as f:
                 js_content = f.read()
-            get_all_strings(js_content)
             js_content_beautified = jsbeautifier.beautify_file(scriptPath, opts)
             #split_on_open_bracket = js_content_beautified.split('{')
             #js_content_beautified = '\n'.join([line + '{' if line != split_on_open_bracket[-1] else line for line in split_on_open_bracket])
@@ -163,7 +137,10 @@ if __name__ == "__main__":
             js_content_beautified = scriptData[scriptId]["js_content_beautified"]
             indices_to_lines = scriptData[scriptId]["indices_to_lines"]
         index = coordinates_to_index(js_content, real_line_number, real_column_number)
+        
         line = get_line_for_index(indices_to_lines, index)
+        if line is None:
+            print("here", scriptId, real_line_number, real_column_number)
         result = {}
         result["scriptId"] = scriptId
         result["line"] = line

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 const puppeteer = require('puppeteer');
-const util = require('node:util');
 var fs = require('fs');
 const crawl = require("./crawler/crawl");
 var path = require('path');
@@ -24,14 +23,6 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function contains(array, element) {
-  for (var i = 0; i < array.length; i++) {
-    if (util.isDeepStrictEqual(array[i], element)) {
-      return true;
-    }
-  }
-  return false;
-}
 
 
 var executed_lines = [];
@@ -90,6 +81,10 @@ async function collect(url, outputDirectory) {
           //if (scope.type !== 'local') {
           //  continue;
           //}
+
+          //if (!(scope.type in variableBindings)) {
+          //  variableBindings[scope.type] = {}
+          //}
           //console.log("not local " + scope.type);
           //scope.object is the object representing that scope. For local, it contains the variables in that scope. Get the objectId for the scope
           let objId = scope.object.objectId;
@@ -105,12 +100,10 @@ async function collect(url, outputDirectory) {
               }
             }
             foundVariables.push(obj.name);
-            if (obj.value !== undefined && obj.value.type !== "function") {
-              /*
-              if (obj.name === "aPageStart") {
-                console.log(obj);
-              }
-              */
+            if (!(obj.name in variableBindings)) {
+              variableBindings[obj.name] = [];
+            }
+            if (obj.value !== undefined) {
               var objDetails = {};
               if (obj.value.type === 'object' && obj.value.objectId !== undefined) {
                 //console.log(obj.value.objectId);
@@ -123,6 +116,8 @@ async function collect(url, outputDirectory) {
                 //console.log(obj.value.type + " : " + obj.value.className + " : " + obj.value.description);
                 objDetails["className"] = obj.value.className;
                 objDetails["heapLocation"] = heapObjectId.heapSnapshotObjectId;
+                // skip getting the fields for now.
+                /*
                 var properties = await session.send("Runtime.getProperties", {objectId: obj.value.objectId});
                 propertiesResults = {}
                 for (index in properties.result) {
@@ -132,16 +127,22 @@ async function collect(url, outputDirectory) {
                   }
                 }
                 objDetails["fields"] = propertiesResults;
+                */
                 //console.log(obj.name, heapObjectId.heapSnapshotObjectId, breakpoint.script, breakpoint.lineNumber, breakpoint.columnNumber, x.hitBreakpoints[0]);
               } else if(obj.value.type === "undefined") {
                 objDetails["type"] = "undefined";
                 //console.log(obj.name, 'undefined');
+              } else if (scope.type === "local" && obj.value.type === "function") {
+                //console.log("function name " + obj.name);
+                objDetails["type"] = "function";
               } else  {
                 objDetails["type"] = obj.value.type;
                 objDetails["value"] = obj.value.value;
                 //console.log(obj.name, obj.value.value);
               }
-              variableBindings[obj.name] = objDetails;
+              if (typeof variableBindings[obj.name] !== "function") { // short hack for now, need to fix this. make variableBindings a map.
+                variableBindings[obj.name].push(objDetails);
+              }
               //console.log(obj.value.type + " : " + obj.value.objectId);
             }
             

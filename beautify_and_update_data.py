@@ -125,7 +125,7 @@ if __name__ == "__main__":
             #split_on_open_bracket = js_content_beautified.split('{')
             #js_content_beautified = '\n'.join([line + '{' if line != split_on_open_bracket[-1] else line for line in split_on_open_bracket])
             
-            with open(os.path.join(collected_data_dir, "beautified", f"{scriptId}"), 'w') as f:
+            with open(os.path.join(collected_data_dir, "beautified", f"{scriptId}.ts"), 'w') as f:
                 f.write(js_content_beautified)
             scriptData[scriptId]["js_content"] = js_content
             scriptData[scriptId]["js_content_beautified"] = js_content_beautified

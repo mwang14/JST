@@ -116,11 +116,11 @@ if __name__ == "__main__":
                         if var_name in execution_types[line]:
                             if type not in execution_types[line][var_name]:
                                 if not is_function(execution_types[line][var_name]):
-                                    print(var_name, type, execution_types[line][var_name], line)
+                                    #print(var_name, type, execution_types[line][var_name], line)
                                     missed += 1
                                 #else:
                                 #    caught += 1
                             else:
                                 caught += 1
-    print(missed, caught)
+    print(f"{lambdanet_results_file} had {missed} missed and {caught} caught")
                         

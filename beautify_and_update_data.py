@@ -106,7 +106,7 @@ if __name__ == "__main__":
     new_data["variableMappings"] = data["variableMappings"]
     new_data["executedLines"] = []
     os.makedirs(os.path.join(collected_data_dir, "beautified"), exist_ok=True)
-    for line in tqdm.tqdm(data["executedLines"]):
+    for i,line in tqdm.tqdm(enumeradata["executedLines"]):
         scriptId = line["scriptId"]
         #if scriptId != "14":
         #    continue

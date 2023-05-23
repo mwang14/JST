@@ -3,6 +3,7 @@ import json
 import jsbeautifier
 import os
 import tqdm
+import gc
 
 def index_to_coordinates(s, index):
     """Returns (line_number, col) of `index` in `s`."""
@@ -69,6 +70,7 @@ def beautified_lines_to_indices(js_content, js_content_beautified, collected_dat
         while (not contains_all_characters(line, js_content[prev_index:cur_index])) and cur_index <= len(js_content):
             #print("line" + " " +  line + " $$$ ", js_content[prev_index:prev_index+75])
             cur_index += 1
+        #print(line, "###", js_content[prev_index:cur_index].strip())
         if cur_index > len(js_content):
             with open(os.path.join(collected_data_dir, "new_data.json"), 'w') as f:
                 f.write('')
@@ -76,7 +78,7 @@ def beautified_lines_to_indices(js_content, js_content_beautified, collected_dat
             sys.exit(1)
             return results
         results[(prev_index, cur_index)] = i
-        #print(i, line, "###", js_content[prev_index:cur_index])
+        #print(i, line, "###", js_content[prev_index:cur_index].strip())
         prev_index = cur_index
     #print(results)
     return results
@@ -84,6 +86,8 @@ def beautified_lines_to_indices(js_content, js_content_beautified, collected_dat
 def get_line_for_index(indices_to_lines, index):
     largest = 0
     largest_start_line = 0
+    if not len(indices_to_lines):
+        return None
     for start, end in indices_to_lines:
         if end >= largest:
             largest = end
@@ -94,11 +98,33 @@ def get_line_for_index(indices_to_lines, index):
         return indices_to_lines[(largest_start_line, largest)]
     return None
 
+def get_beautified_line_number(orig_line_number,
+                               orig_column_number,
+                               start_line_number,
+                               start_column_number,
+                               script_id,
+                               scriptData,
+                               debug=False):
+    real_line_number = get_real_line_number(start_line_number, orig_line_number)
+    real_column_number = get_real_column_number(real_line_number, start_column_number, orig_column_number)
+    indices_to_lines = scriptData[script_id]["indices_to_lines"]
+    js_content = scriptData[script_id]["js_content"]
+    debug_indices_to_lines = {}
+    for key in indices_to_lines:
+        debug_indices_to_lines[str(key)] = indices_to_lines[key]
+    with open(f"/tmp/{script_id}", 'w') as f:
+        f.write(json.dumps(debug_indices_to_lines))
+    
+    start_index = coordinates_to_index(js_content, real_line_number, real_column_number)
+    #if debug:
+    #    print(start_index, real_line_number, orig_line_number, start_line_number)
+    line = get_line_for_index(indices_to_lines, start_index)
+    return line
 
 if __name__ == "__main__":
     collected_data_dir = sys.argv[1]
     print(f"running on {collected_data_dir}")
-    if os.path.exists(os.path.join(collected_data_dir, "new_data.json")):
+    if False:#os.path.exists(os.path.join(collected_data_dir, "new_data.json")):
         print(f"already ran on {collected_data_dir}!")
         sys.exit(0)
     opts = get_beautifier_opts()
@@ -113,15 +139,13 @@ if __name__ == "__main__":
     scriptData = {}
     count = 0
     new_data = {}
-    new_data["variableMappings"] = data["variableMappings"]
+    new_data["variableMappings"] = []
     new_data["executedLines"] = []
     os.makedirs(os.path.join(collected_data_dir, "beautified"), exist_ok=True)
     with tqdm.tqdm(total=len(data["executedLines"])) as pbar:
         for i,line in enumerate(data["executedLines"]):
             pbar.update(1)
             scriptId = line["scriptId"]
-            #if scriptId != "14":
-            #    continue
             line_number = line["line"]
             column = line["column"]
             start_column = metadata[scriptId]["startColumn"]
@@ -134,8 +158,6 @@ if __name__ == "__main__":
                 with open(scriptPath, 'r') as f:
                     js_content = f.read()
                 js_content_beautified = jsbeautifier.beautify_file(scriptPath, opts)
-                #split_on_open_bracket = js_content_beautified.split('{')
-                #js_content_beautified = '\n'.join([line + '{' if line != split_on_open_bracket[-1] else line for line in split_on_open_bracket])
                 
                 with open(os.path.join(collected_data_dir, "beautified", f"{scriptId}.ts"), 'w') as f:
                     f.write(js_content_beautified)
@@ -143,13 +165,12 @@ if __name__ == "__main__":
                 scriptData[scriptId]["js_content_beautified"] = js_content_beautified
                 indices_to_lines = beautified_lines_to_indices(js_content, js_content_beautified, collected_data_dir)
                 scriptData[scriptId]["indices_to_lines"] = indices_to_lines
-                #print(scriptId)
             else:
                 js_content = scriptData[scriptId]["js_content"]
                 js_content_beautified = scriptData[scriptId]["js_content_beautified"]
                 indices_to_lines = scriptData[scriptId]["indices_to_lines"]
+
             index = coordinates_to_index(js_content, real_line_number, real_column_number)
-            
             line = get_line_for_index(indices_to_lines, index)
             if line is None:
                 # something went wrong, skip
@@ -161,29 +182,65 @@ if __name__ == "__main__":
             new_data["executedLines"].append(result)
             js_content_index = 0
             js_content_beautified_index = 0
+    gc.collect()
+            # Update variable mapping locations
+    with tqdm.tqdm(total=len(data["variableMappings"])) as pbar:
+        for i,mapping in enumerate(data["variableMappings"]):
+            pbar.update(1)
+            variable_bindings_for_line = mapping["variableBindings"]
+            call_frame_info_for_line = mapping["callFrameInfo"]
             
-            """
-            while (js_content_index <= index and 
-                   js_content_index < len(js_content) and 
-                   js_content_beautified_index < len(js_content_beautified)):
-                js_content_char = js_content[js_content_index]
-                js_content_beautified_char = js_content_beautified[js_content_beautified_index]
-                if js_content_char == js_content_beautified_char:
-                    #print(f"{ord(js_content_char)} : {ord(js_content_beautified_char)} are equal")
-                    js_content_index += 1
-                    js_content_beautified_index += 1
-                else:
-                    #print(f"{ord(js_content_char)} : {ord(js_content_beautified_char)} are not equal")
-                    js_content_beautified_index += 1
-            #print(get_string_at_index(js_content, index, window=1))
-            if js_content[js_content_index-1] != js_content_beautified[js_content_beautified_index-1]:
-                print(index, js_content_index, scriptId)
-                print(get_string_at_index(js_content, js_content_index-1, window=5), "###", get_string_at_index(js_content_beautified, js_content_beautified_index-1, window=5))
-            count += 1
-            """
+            new_variable_bindings_for_line = {}
+            for var_name, var_info_all_scopes in variable_bindings_for_line.items():
+                new_variable_bindings_for_line[var_name] = []
+                for var_info_for_scope in var_info_all_scopes:
+                    scope_info = var_info_for_scope["scopeInfo"]
+                    #print(scope_info)
+                    if "startLocation" in scope_info:
+                        start_location = scope_info["startLocation"]
+                        start_scriptId = start_location["scriptId"]
+                        start_location_line = start_location["lineNumber"]
+                        start_location_column = start_location["columnNumber"]
+                        
+                        start_column = metadata[start_scriptId]["startColumn"]
+                        start_line_number = metadata[start_scriptId]["startLine"]
+                        line = get_beautified_line_number(start_location_line, start_location_column, start_line_number, start_column, start_scriptId, scriptData)
+                        #if start_location_line == 1 and start_location_column == 292115:
+                        #    print("LINE", line)
+                        scope_info["startLocation"].pop("columnNumber")
+                        scope_info["startLocation"]["lineNumber"] = line
+                    if "endLocation" in scope_info:
+                        end_location = scope_info["endLocation"]
+                        end_scriptId = end_location["scriptId"]
+                        end_location_line = end_location["lineNumber"]
+                        end_location_column = end_location["columnNumber"]
+                        
+                        start_column = metadata[end_scriptId]["startColumn"]
+                        start_line_number = metadata[end_scriptId]["startLine"]
+                        
+                        
+                        if end_location_line == 1056 and end_location_column == 2174:
+                            line = get_beautified_line_number(end_location_line, end_location_column, start_line_number, start_column, end_scriptId, scriptData, debug=True)
+                            #print(f"END LINE: {line}, SCRIPT ID: {end_scriptId}") 
+                        else:
+                            line = get_beautified_line_number(end_location_line, end_location_column, start_line_number, start_column, end_scriptId, scriptData)
+                        scope_info["endLocation"].pop("columnNumber")
+                        scope_info["endLocation"]["lineNumber"] = line
+                    var_info_for_scope["scopeInfo"] = scope_info
+                    new_variable_bindings_for_line[var_name].append(var_info_for_scope)
+                    #print(scope_info)
+                    #print("###")
+                line_execution_info = {}
+                line_execution_info["callFrameInfo"] = call_frame_info_for_line
+                line_execution_info["variableBindings"] = new_variable_bindings_for_line
+            new_data["variableMappings"].append(line_execution_info)
+        
+
+
+        print("here")      
         if True:#len(new_data["executedLines"]):
             with open(os.path.join(collected_data_dir, "new_data.json"), 'w') as f:
-                f.write(json.dumps(new_data, indent=4, sort_keys=True))
+                json.dump(new_data, f, indent=4, sort_keys=True)
             #print(get_string_at_index(js_content_beautified, js_content_beautified_index, window=1))
     
 

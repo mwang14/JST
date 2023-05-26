@@ -91,6 +91,14 @@ def get_script_section(script_contents, start_index, end_index, num_tokens=2000)
         start_index = max(0, start_index - 5)
         data = '\n'.join(script_contents[start_index:end_index])
     return data, start_index
+
+def get_script_contents_between_scope(script_contents, start_line, end_line, num_tokens=2000):
+    encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+    data = '\n'.join(script_contents[start_line:end_line])
+    if len(encoding.encode(data)) > num_tokens:
+        return None
+    else:
+        return data
         
 def get_scope_info(data_json):
     execution_info = data_json["variableMappings"]
@@ -149,11 +157,15 @@ def get_type_info(data_json, scripts_tokenized):
             end_line = scope["endLocation"]["lineNumber"]
             real_var_name = '_'.join(var_name.split('_')[:-1])
             script_id = scope["startLocation"]["scriptId"]
-            var_definition_line = get_variable_definition_line(scripts_tokenized[script_id], real_var_name, start_line, end_line)
-            var_result["line"] = var_definition_line
-            var_result["type"] = var_type
-            var_result["script_id"] = script_id
-            result[var_name] = var_result
+            if script_id in scripts_tokenized:
+                var_definition_line = get_variable_definition_line(scripts_tokenized[script_id], real_var_name, start_line, end_line)
+                if var_definition_line:
+                    var_result["line"] = var_definition_line
+                    var_result["type"] = var_type
+                    var_result["script_id"] = script_id
+                    var_result["scope_start_line"] = start_line
+                    var_result["scope_end_line"] = end_line
+                    result[var_name] = var_result
     return result
 
 def gen_scope_prompt(code_snippet, var_name, start_line, end_line):
@@ -198,7 +210,8 @@ def gen_scope_prompts(scope_info, scripts_json):
         start_line = start_location["lineNumber"]
         end_location = scope["endLocation"]
         end_line = end_location["lineNumber"]
-
+        if start_line == end_line:
+            continue
         script_id = start_location["scriptId"]
         script_contents = scripts_json[script_id].split('\n')
         code_snippet, new_start_line = get_script_section(script_contents, start_line, end_line)
@@ -214,7 +227,8 @@ def gen_scope_prompts(scope_info, scripts_json):
         start_line = start_location["lineNumber"]
         end_location = scope["endLocation"]
         end_line = end_location["lineNumber"]
-
+        if start_line == end_line:
+            continue
         script_id = start_location["scriptId"]
         script_contents = scripts_json[script_id].split('\n')
         code_snippet, new_start_line = get_script_section(script_contents, start_line, end_line)
@@ -235,10 +249,13 @@ def find_other_variable_in_same_script(alias_info,heap_location, var_name, scrip
             if other_var_name != var_name:
                 if variables[other_var_name]["startLocation"]["scriptId"] == script_id:
                     all_variables[other_var_name] = variables[other_var_name]
-    other_var = random.choice(list(all_variables.keys()))
-    other_var_start_line = all_variables[other_var]["startLocation"]["lineNumber"]
-    other_var_end_line = all_variables[other_var]["endLocation"]["lineNumber"]
-    return other_var, other_var_start_line, other_var_end_line
+    if len(all_variables):
+        other_var = random.choice(list(all_variables.keys()))
+        other_var_start_line = all_variables[other_var]["startLocation"]["lineNumber"]
+        other_var_end_line = all_variables[other_var]["endLocation"]["lineNumber"]
+        return other_var, other_var_start_line, other_var_end_line
+    else: 
+        return None, None, None
 
 def gen_alias_prompt(code_snippet, 
                      first_var_name, 
@@ -296,6 +313,8 @@ def gen_alias_prompts(alias_info, scripts_json):
             first_var_start_line = variables[first_var]["startLocation"]["lineNumber"]
             first_var_end_line = variables[first_var]["endLocation"]["lineNumber"]
             second_var, second_var_start_line, second_var_end_line = find_other_variable_in_same_script(alias_info, heap_location, first_var, script_id)
+            if second_var == None:
+                continue
 
             start_line = min(first_var_start_line, second_var_start_line)
             end_line = max(first_var_end_line, second_var_end_line)
@@ -318,6 +337,7 @@ def gen_alias_prompts(alias_info, scripts_json):
             result["no_alias"].append(prompt)
     return result
 
+
 def gen_type_prompt(code_snippet, var_name, line):
     return f"What is the type of '{var_name}' defined on line {line}? \n\n ```\n{code_snippet}\n```"
 
@@ -327,23 +347,33 @@ def gen_type_prompts(type_info, scripts_json):
         var_result = {}
         script_id = var_info["script_id"]
         line = var_info["line"]
+        scope_start_line = var_info["scope_start_line"]
+        scope_end_line = var_info["scope_end_line"]
         script_contents = scripts_json[script_id].split('\n')
-        code_snippet, new_start_line = get_script_section(script_contents, line, line)
-        line = line - new_start_line
-        real_var_name = '_'.join(var_name.split('_')[:-1])
-        prompt = gen_type_prompt(code_snippet, real_var_name, line)
-        var_result["prompt"] = prompt
-        var_result["type"] = var_info["type"]
-        result.append(var_result)
+        code_snippet = get_script_contents_between_scope(script_contents, scope_start_line, scope_end_line)
+        if code_snippet:
+            line = line - scope_start_line
+            real_var_name = '_'.join(var_name.split('_')[:-1])
+            prompt = gen_type_prompt(code_snippet, real_var_name, line)
+            var_result["prompt"] = prompt
+            var_result["type"] = var_info["type"]
+            result.append(var_result)
     return result
 
 
 if __name__ == "__main__":
     extracted_dir = sys.argv[1]
     data_json_files = glob.glob(os.path.join(extracted_dir, "**/new_data.json"), recursive=True)
+    all_alias_prompts = {}
+    all_alias_prompts["aliases"] = []
+    all_alias_prompts["no_alias"] = []
+    all_type_prompts = []
+    all_scope_prompts = {}
+    all_scope_prompts["exists_outside"] = []
+    all_scope_prompts["only_local"] = []
     for data_json_file in data_json_files:
-        if "instagram.com" not in data_json_file:
-            continue
+        #if "instagram.com" not in data_json_file:
+        #    continue
         print(f"running on {data_json_file}")
         out_dir = os.path.dirname(data_json_file)
         with open(data_json_file, 'r') as f:
@@ -384,28 +414,39 @@ if __name__ == "__main__":
             with open(os.path.join(javascript_file_dir, javascript_file), 'r') as f:
                 script_contents = f.read()
                 scripts_json[script_id] = script_contents
-                scripts_tokenized[script_id] = esprima.tokenize(script_contents, {"loc": True})
+                try:
+                    scripts_tokenized[script_id] = esprima.tokenize(script_contents, {"loc": True})
+                except Exception:
+                    pass
         type_dataset_file = os.path.join(out_dir, "type_info.json")
-        if not os.path.exists(type_dataset_file):
+        if True:#not os.path.exists(type_dataset_file):
             type_info = get_type_info(data_json_updated, scripts_tokenized)
             with open(type_dataset_file, 'w') as f:
                 json.dump(type_info, f, indent=4)
         else:
             with open(type_dataset_file, 'r') as f:
                 type_info = json.load(f)
-        print(data_json_file)
-        #prompts = gen_scope_prompts(scope_info, scripts_json)
-        #with open(os.path.join(out_dir, "prompts.json"), 'w') as f:
-        #    json.dump(prompts, f, indent=4)
-        #prompts = gen_alias_prompts(aliased_variables, scripts_json)
-        #with open(os.path.join(out_dir, "alias_prompts.json"),'w') as f:
-        #    json.dump(prompts,f,indent=4)
-        prompts = gen_type_prompts(type_info, scripts_json)
+        scope_prompts = gen_scope_prompts(scope_info, scripts_json)
+        all_scope_prompts["exists_outside"] += scope_prompts["exists_outside"]
+        all_scope_prompts["only_local"] += scope_prompts["only_local"]
+        with open(os.path.join(out_dir, "scope_prompts.json"), 'w') as f:
+            json.dump(scope_prompts, f, indent=4)
+        alias_prompts = gen_alias_prompts(aliased_variables, scripts_json)
+        all_alias_prompts["aliases"] += alias_prompts["aliases"]
+        all_alias_prompts["no_alias"] += alias_prompts["no_alias"]
+        with open(os.path.join(out_dir, "alias_prompts.json"),'w') as f:
+            json.dump(alias_prompts,f,indent=4)
+        type_prompts = gen_type_prompts(type_info, scripts_json)
+        all_type_prompts += type_prompts
         with open(os.path.join(out_dir, "type_prompts.json"), 'w') as f:
-            json.dump(prompts,f, indent=4)
-        break
+            json.dump(type_prompts,f, indent=4)
 
-        
+    with open("all_alias_prompts.json", 'w') as f:
+        json.dump(all_alias_prompts, f, indent=4)
+    with open("all_type_prompts.json", 'w') as f:
+        json.dump(all_type_prompts, f, indent=4)
+    with open("all_scope_prompts.json", 'w') as f:
+        json.dump(all_scope_prompts, f, indent=4)
     
     
         

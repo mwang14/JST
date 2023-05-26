@@ -1,6 +1,11 @@
 import openai
 import logging
 import os
+import sys
+import json
+import random
+import tiktoken
+import time
 
 class OpenAIInterface:
 
@@ -57,10 +62,117 @@ class OpenAIInterface:
             logging.getLogger('sys').error(f'[ERROR] OpenAIInterface: Unexpected exception- {e}')
             return ''
 
+def get_types(type_prompts, openai_interface):
+    print("predicting types!")
+    encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+    filtered_type_prompts = []
+    for prompt in type_prompts:
+        if len(encoding.encode(prompt["prompt"])) < 3000:
+            filtered_type_prompts.append(prompt)
+    
+    random_type_prompts = random.sample(filtered_type_prompts, 100)
+    result = []
+    for type_prompt in random_type_prompts:
+        pred_result = {}
+        prompt = type_prompt["prompt"]
+        var_type = type_prompt["type"]
+        pred_result["prompt"] = prompt
+        pred_result["type"] = var_type
+        prediction = openai_interface.predict_text(prompt)
+        pred_result["prediction"] = prediction
+        result.append(pred_result)
+        time.sleep(1)
+    return result
+
+def get_aliases(alias_prompts, openai_interface):
+    print("predicting aliases!")
+    encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+    filtered_alias_prompts = {}
+    filtered_alias_prompts["aliases"] = []
+    filtered_alias_prompts["no_alias"] = []
+    for prompt in alias_prompts["aliases"]:
+        if len(encoding.encode(prompt)) < 3000 and prompt not in filtered_alias_prompts["aliases"]:
+            filtered_alias_prompts["aliases"].append(prompt)
+    for prompt in alias_prompts["no_alias"]:
+        if len(encoding.encode(prompt)) < 3000 and prompt not in filtered_alias_prompts["no_alias"]:
+            filtered_alias_prompts["no_alias"].append(prompt)
+    aliases = random.sample(filtered_alias_prompts["aliases"], 50)
+    no_alias = random.sample(filtered_alias_prompts["no_alias"], 50)
+
+    result = []
+    for prompt in aliases:
+        prompt_result = {}
+        prompt_result["prompt"] = prompt
+        prompt_result["aliases"] = "yes"
+        prediction = openai_interface.predict_text(prompt)
+        prompt_result["prediction"] = prediction
+        result.append(prompt_result)
+        time.sleep(1)
+    for prompt in no_alias:
+        prompt_result = {}
+        prompt_result["prompt"] = prompt
+        prompt_result["aliases"] = "no"
+        prediction = openai_interface.predict_text(prompt)
+        prompt_result["prediction"] = prediction
+        result.append(prompt_result)
+        time.sleep(1)
+    return result
+
+def get_scopes(scope_prompts, openai_interface):
+    print("predicting scopes!")
+    encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+    filtered_scope_prompts = {}
+    filtered_scope_prompts["exists_outside"] = []
+    filtered_scope_prompts["only_local"] = []
+    for prompt in scope_prompts["exists_outside"]:
+        if len(encoding.encode(prompt)) < 3000 and prompt not in filtered_scope_prompts["exists_outside"]:
+            filtered_scope_prompts["exists_outside"].append(prompt)
+    for prompt in scope_prompts["only_local"]:
+        if len(encoding.encode(prompt)) < 3000 and prompt not in filtered_scope_prompts["only_local"]:
+            filtered_scope_prompts["only_local"].append(prompt)
+    exists_outside = random.sample(filtered_scope_prompts["exists_outside"],50)
+    only_local = random.sample(filtered_scope_prompts["only_local"], 50)
+    result = []
+    for prompt in exists_outside:
+        prompt_result = {}
+        prompt_result["prompt"] = prompt
+        prompt_result["exists_outside"] = "yes"
+        prediction = openai_interface.predict_text(prompt)
+        prompt_result["prediction"] = prediction
+        result.append(prompt_result)
+        time.sleep(1)
+    for prompt in only_local:
+        prompt_result = {}
+        prompt_result["prompt"] = prompt
+        prompt_result["exists_outside"] = "no"
+        prediction = openai_interface.predict_text(prompt)
+        prompt_result["prediction"] = prediction
+        result.append(prompt_result)
+        time.sleep(1)
+    return result
+
 if __name__ == '__main__' :
 
     #personal_api_key = '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'
     #personal_api_key = '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'
     personal_api_key = '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'
+    with open("all_type_prompts.json", 'r') as f:
+        type_prompts = json.load(f)
+    with open("all_alias_prompts.json", 'r') as f:
+        alias_prompts = json.load(f)
+    with open("all_scope_prompts.json", 'r') as f:
+        scope_prompts = json.load(f)
     openai_interface = OpenAIInterface(api_key=personal_api_key)
-    print(openai_interface.predict_text("hello"))
+
+    #type_preds = get_types(type_prompts, openai_interface)
+    #with open("type_results.json", 'w') as f:
+    #    json.dump(type_preds, f, indent=4)
+
+    #alias_preds = get_aliases(alias_prompts, openai_interface)
+    #with open("alias_results.json", 'w') as f:
+    #    json.dump(alias_preds,f,indent=4)
+
+    scope_preds = get_scopes(scope_prompts, openai_interface)
+    with open("scope_results.json", 'w') as f:
+        json.dump(scope_preds,f,indent=4)
+    

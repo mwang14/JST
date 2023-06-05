@@ -413,7 +413,7 @@ def gen_type_prompts(type_info, scripts_json, path):
 
 if __name__ == "__main__":
     extracted_dir = sys.argv[1]
-    data_json_files = glob.glob(os.path.join(extracted_dir, "**/new_data.json"), recursive=True)
+    data_json_files = glob.glob(os.path.join(extracted_dir, "**/data.json"), recursive=True)
     all_alias_prompts = {}
     all_alias_prompts["aliases"] = []
     all_alias_prompts["no_alias"] = []
@@ -440,6 +440,7 @@ if __name__ == "__main__":
             
             with open(unique_id_file, 'w') as f:
                 f.write(json.dumps(data_json_updated, indent=4))
+        """
         alias_dataset_file = os.path.join(out_dir, "aliases.json")
         if not os.path.exists(alias_dataset_file):
             aliased_variables = find_aliasing_variables(data_json_updated)
@@ -496,14 +497,14 @@ if __name__ == "__main__":
         all_type_prompts += type_prompts
         with open(os.path.join(out_dir, "type_prompts.json"), 'w') as f:
             json.dump(type_prompts,f, indent=4)
-        
+        """
     
     #with open("all_alias_prompts.json", 'w') as f:
     #    json.dump(all_alias_prompts, f, indent=4)
-    with open("all_type_prompts.json", 'w') as f:
-        json.dump(all_type_prompts, f, indent=4)
-    with open("all_scope_prompts.json", 'w') as f:
-        json.dump(all_scope_prompts, f, indent=4)
+    #with open("all_type_prompts.json", 'w') as f:
+    #    json.dump(all_type_prompts, f, indent=4)
+    #with open("all_scope_prompts.json", 'w') as f:
+    #    json.dump(all_scope_prompts, f, indent=4)
     
         
     

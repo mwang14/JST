@@ -160,15 +160,13 @@ def get_scopes(scope_prompts, openai_interface):
 
 if __name__ == '__main__' :
     out_dir = sys.argv[1]
-    #personal_api_key = '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'
-    #personal_api_key = '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'
-    personal_api_key = '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'
     with open("all_type_prompts.json", 'r') as f:
         type_prompts = json.load(f)
     with open("all_alias_prompts.json", 'r') as f:
         alias_prompts = json.load(f)
     with open("all_scope_prompts.json", 'r') as f:
         scope_prompts = json.load(f)
+    personal_api_key = "REDACTED"
     openai_interface = OpenAIInterface(api_key=personal_api_key)
 
     #type_preds = get_types(type_prompts, openai_interface)

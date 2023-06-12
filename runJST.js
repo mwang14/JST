@@ -43,16 +43,14 @@ function execShellCommand(cmd) {
 
 var executed_lines = [];
 var variable_values = [];
+
+
 async function collect(url, outputDirectory, data) {
   console.log("collecting");
   if (!fs.existsSync(outputDirectory)){
     fs.mkdirSync(outputDirectory);
   }
   count = 0;
-  var lastScriptLoadedTime = new Date().getTime() / 1000;
-  var breakpointIDsToLines = {};
-  var scriptIDsToURLs = {};
-  var columns = [];
 
   
   // Use Puppeteer to launch a browser and open a page. For some reason doesn't work in a sandbox
@@ -60,8 +58,6 @@ async function collect(url, outputDirectory, data) {
   
   const page = await browser.newPage();
   const session = await page.target().createCDPSession();
-  // Get all the breakpoints
-  var all_breakpoints = []
   
   var scriptSources = {};
   var foundVariables = []
@@ -121,7 +117,6 @@ async function collect(url, outputDirectory, data) {
                 if (obj.value.subtype !== undefined) {
                   objDetails["subtype"] = obj.value.subtype;
                 }
-                //console.log(obj.value.type + " : " + obj.value.className + " : " + obj.value.description);
                 objDetails["className"] = obj.value.className;
                 objDetails["heapLocation"] = heapObjectId.heapSnapshotObjectId;
                 // skip getting the fields for now.
@@ -166,8 +161,6 @@ async function collect(url, outputDirectory, data) {
   
   var scriptMetadata = {};
   async function scriptParsed(x) {
-    //console.log(x.scriptId + " has been parsed, url is " + x.url);
-    //console.log(x.startLine + " " + x.startColumn);
     scriptMetadata[x.scriptId] = {};
     scriptMetadata[x.scriptId]["startLine"] = x.startLine;
     scriptMetadata[x.scriptId]["startColumn"] = x.startColumn;
@@ -180,44 +173,33 @@ async function collect(url, outputDirectory, data) {
   
   await sleep(2000);
   await session.send("HeapProfiler.enable");
-  //console.log("here3");
   await session.send("HeapProfiler.startTrackingHeapObjects", {trackAllocations: true})
   //console.log("here4");
-  await sleep(1000);
   
   await session.send("Debugger.pause");
   try {
-    //await page.goto(url, {timeout: 10000});
     await page.goto(url, {timeout: 600000});
   } catch(error){
     console.log("timed out");
   }
 
 
-  //let buttons = await page.$$('button');
-  //buttons[0].click();
   await sleep(5000);
   await browser.close();
   var result = {};
   result["executedLines"] = executed_lines;
   result["variableMappings"] = variable_values;
-  /*
-  fs.writeFileSync(`${outputDirectory}/linesCalled.jsonl`, JSON.stringify(executed_lines, null, 2) , 'utf-8');
-  fs.writeFileSync(`${outputDirectory}/variableMappings.jsonl`, JSON.stringify(variable_values, null, 2) , 'utf-8');
-  */
   fs.writeFileSync(`${outputDirectory}/data.json`, JSON.stringify(result, null, 2) , 'utf-8');
   fs.writeFileSync(`${outputDirectory}/scriptMetadata.json`, JSON.stringify(scriptMetadata, null, 2) , 'utf-8');
   console.log(executed_lines.length, variable_values.length);
   console.log(`tar -czf ${path.dirname(outputDirectory)}/${url.substring(8)}.tar.gz -C ${path.dirname(outputDirectory)} ${outputDirectory.replace(/^.*[\\\/]/, '')}`);
   console.log(`rm -r ${outputDirectory}`);
   await execShellCommand(`tar -czf ${path.dirname(outputDirectory)}/${url.substring(8)}.tar.gz -C ${path.dirname(outputDirectory)} ${outputDirectory.replace(/^.*[\\\/]/, '')}`);
-  //await sleep(2000);
-  //exec(`ls ${outputDirectory}`);
+
   exec(`rm -r ${outputDirectory}`);
   
 }
 async function run(website, path, data) {
-  //await collect("https://alfagroup.csail.mit.edu/", "/tmp/alfa");
   console.log("Collecting " + data + " on " + website + " and saving to " + path);
   await collect(website, path, data);
 

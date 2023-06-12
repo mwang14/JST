@@ -93,6 +93,7 @@ def escape_get_scope_info(data_json, scripts_tokenized, metadata):
                 scope = var_info["scopeInfo"]
                 var_exists = True
                 if scope["scope"] != "global":
+                    #print(var_info)
                     scope_start_line = scope["startLocation"]["lineNumber"]
                     scope_start_column = scope["startLocation"]["columnNumber"]
 
@@ -205,6 +206,96 @@ def gen_scope_dataset(scope_info, scripts_tokenized):
                 result["label"].append(0)
     return pd.DataFrame.from_dict(result)
 
+def gen_scope_prompt(code_snippet, var_name, line):
+    return f"the variable '{var_name}' defined on line {line} is a pointer. Does the object that '{var_name}' points to still exist outside this code snippet? Answer yes or no. \n\n ```\n{code_snippet}\n```"
+
+# Gets heap locations that persist outside of their scope
+def gen_scope_prompts(scope_info, scripts_json, path):
+    result = {}
+    result["not_local"] = []
+    result["local"] = []
+    
+    for scope, heap_locations in scope_info.items():
+        if "global" in scope:
+            continue
+        scope_json = json.loads(scope)
+
+        for heap_location in heap_locations:
+            if heap_location in result["local"] or heap_location in result["not_local"]:
+                continue
+            heap_location_result = {}
+            exists_outside = False
+            for other_scope, other_heap_locations in scope_info.items():
+                if other_scope == scope:
+                    continue
+                if heap_location in other_heap_locations:
+                    exists_outside = True
+            
+            heap_location_result["heap_location"] = heap_location
+            heap_location_result["variables"] = heap_locations[heap_location] # this is the list of variables
+            heap_location_result["scope"] = scope_json
+            if exists_outside:
+                result["not_local"].append(heap_location_result)
+            else:
+                result["local"].append(heap_location_result)
+    count = 0
+
+    prompts = {}
+    prompts["exists_outside"] = []
+    prompts["only_local"] = []
+    for pointer_data in result["not_local"]:
+        scope = pointer_data["scope"]
+        start_location = scope["startLocation"]
+        start_line = start_location["lineNumber"]
+        end_location = scope["endLocation"]
+        end_line = end_location["lineNumber"]
+        if start_line == end_line:
+            continue
+        script_id = start_location["scriptId"]
+        script_contents = scripts_json[script_id].split('\n')
+        code_snippet = gen_datasets.get_script_contents_between_scope(script_contents, start_line, end_line)
+        if not code_snippet:
+            continue
+        var_name = random.choice(list(pointer_data["variables"]))
+        line = pointer_data["variables"][var_name]
+        line = line - start_line
+        real_var_name = '_'.join(var_name.split('_')[:-1])
+        prompt = gen_scope_prompt(code_snippet, real_var_name, line)
+        prompt_info = {}
+        prompt_info["prompt"] = prompt
+        prompt_info["path"] = path
+        prompt_info["scriptId"] = script_id
+        prompt_info["start_line"] = start_line
+        prompt_info["end_line"] = end_line
+
+        prompts["exists_outside"].append(prompt_info)
+    for pointer_data in result["local"]:
+        scope = pointer_data["scope"]
+        start_location = scope["startLocation"]
+        start_line = start_location["lineNumber"]
+        end_location = scope["endLocation"]
+        end_line = end_location["lineNumber"]
+        if start_line == end_line:
+            continue
+        script_id = start_location["scriptId"]
+        script_contents = scripts_json[script_id].split('\n')
+        code_snippet = gen_datasets.get_script_contents_between_scope(script_contents, start_line, end_line)
+        if not code_snippet:
+            continue
+        var_name = random.choice(list(pointer_data["variables"]))
+        line = pointer_data["variables"][var_name]
+        line = line - start_line
+        real_var_name = '_'.join(var_name.split('_')[:-1])
+        prompt_info = {}
+        prompt = gen_scope_prompt(code_snippet, real_var_name, line)
+        prompt_info["prompt"] = prompt
+        prompt_info["path"] = path
+        prompt_info["scriptId"] = script_id
+        prompt_info["start_line"] = start_line
+        prompt_info["end_line"] = end_line
+        prompts["only_local"].append(prompt_info)
+    return prompts
+
 if __name__ == "__main__":
     extracted_dir = sys.argv[1]
     output_pickle_directory = sys.argv[2]
@@ -213,7 +304,7 @@ if __name__ == "__main__":
     full_df = pd.DataFrame(columns=["tokens","annotations","labels"])
     print(len(data_json_files))
     for data_json_file in data_json_files:
-        
+        print(f"running on {data_json_file}")
         out_dir = os.path.dirname(data_json_file)
         script_metadata_file = os.path.join(out_dir, "scriptMetadata.json")
         with open(script_metadata_file, 'r') as f:
@@ -224,7 +315,7 @@ if __name__ == "__main__":
             except json.decoder.JSONDecodeError:
                 continue
         unique_id_file = os.path.join(out_dir, "unique_ids.json")
-        if os.path.exists(unique_id_file):
+        if False:#os.path.exists(unique_id_file):
             with open(unique_id_file, 'r') as f:
                 data_json_updated = json.load(f)
         else:
@@ -237,7 +328,7 @@ if __name__ == "__main__":
         scripts_json = {} # script IDs to script contents
         scripts_tokenized = {}
         for javascript_file in javascript_files:
-            script_id = javascript_file.replace('.ts','')
+            script_id = os.path.basename(javascript_file).replace('.ts','')
             with open(javascript_file, 'r') as f:
                 script_contents = f.read()
                 scripts_json[script_id] = script_contents
@@ -246,18 +337,18 @@ if __name__ == "__main__":
                 except Exception:
                     pass
         scope_dataset_file = os.path.join(out_dir, "scope_info.json")
-        if not os.path.exists(scope_dataset_file):
-            scope_info = escape_get_scope_info(data_json_updated, scripts_tokenized, metadata)
-            with open(scope_dataset_file, 'w') as f:
-                f.write(json.dumps(scope_info, indent=4))
-        else:
-            with open(scope_dataset_file, 'r') as f:
-                scope_info = json.load(f)
+        scope_info = escape_get_scope_info(data_json_updated, scripts_tokenized, metadata)
+        with open(scope_dataset_file, 'w') as f:
+            f.write(json.dumps(scope_info, indent=4))
 
         
         res = gen_scope_dataset(scope_info, scripts_tokenized)
         print(f"running on {data_json_file}, had {len(res)}")
         escape_dataset_file = os.path.join(out_dir, "escape_dataset.csv")
+        print(scripts_json.keys())
+        scope_prompts = gen_scope_prompts(scope_info, scripts_json, out_dir)
+        with open(os.path.join(out_dir, "scope_prompts.json"), 'w') as f:
+            json.dump(scope_prompts, f, indent=4)
         #res.to_csv(escape_dataset_file)
         #full_df = pd.concat([full_df,res])
         output_file = os.path.join(output_pickle_directory, os.path.basename(out_dir)) + ".pkl"

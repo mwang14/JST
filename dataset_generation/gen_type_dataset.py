@@ -46,6 +46,32 @@ def get_type_info(data_json, scripts_tokenized):
                     result[var_name] = var_result
     return result
 
+
+def gen_type_prompt(code_snippet, var_name, line):
+    return f"What are the top 5 most likely types for the variable '{var_name}' defined on line {line}? \n\n ```\n{code_snippet}\n```"
+
+def gen_type_prompts(type_info, scripts_json, path):
+    result = []
+    for var_name, var_info in type_info.items():
+        var_result = {}
+        script_id = var_info["script_id"]
+        line = var_info["line"]
+        scope_start_line = var_info["scope_start_line"]
+        scope_end_line = var_info["scope_end_line"]
+        script_contents = scripts_json[script_id].split('\n')
+        code_snippet = gen_datasets.get_script_contents_between_scope(script_contents, scope_start_line, scope_end_line)
+        if code_snippet:
+            adjusted_line = line - scope_start_line
+            real_var_name = '_'.join(var_name.split('_')[:-1])
+            prompt = gen_type_prompt(code_snippet, real_var_name, adjusted_line)
+            var_result["prompt"] = prompt
+            var_result["type"] = var_info["type"]
+            var_result["path"] = path
+            var_result["scriptId"] = script_id
+            var_result["line"] = line
+            result.append(var_result)
+    return result
+
 if __name__ == "__main__":
     extracted_dir = sys.argv[1]
     data_json_files = glob.glob(os.path.join(extracted_dir, "**/new_data.json"), recursive=True)
@@ -87,4 +113,6 @@ if __name__ == "__main__":
         type_info = get_type_info(data_json_updated, scripts_tokenized)
         with open(type_dataset_file, 'w') as f:
             json.dump(type_info, f, indent=4)
-        
+        type_prompts = gen_type_prompts(type_info, scripts_json,out_dir)
+        with open(os.path.join(out_dir, "type_prompts.json"), 'w') as f:
+            json.dump(type_prompts,f, indent=4)

@@ -48,29 +48,6 @@ def create_variable_ids(data_json):
     result["variableMappings"] = new_variable_bindings
     return result
 
-def find_aliasing_variables(data_json):
-    execution_info = data_json["variableMappings"]
-    result = {}
-    for info in execution_info:
-        for var_name in info:
-            var_info = info[var_name]
-            if var_info["type"] == "object":
-                if "heapLocation" in var_info and var_info["scopeInfo"]["scope"] != "global":
-                    heapLocation = var_info["heapLocation"]
-                    if heapLocation == "0":
-                        continue
-                    if heapLocation in result:
-                        if var_name not in result[heapLocation]:
-                            result[heapLocation][var_name] = var_info["scopeInfo"]
-                    else:
-                        result[heapLocation] = {}
-                        result[heapLocation][var_name] = var_info["scopeInfo"]
-    new_result = {}
-    for heapLocation, variables in result.items():
-        if len(variables) > 1:
-            new_result[heapLocation] = list(variables)
-    return result
-
 def get_first_use_of_variable_in_scope(data_json, var_name):
     for i,line in enumerate(data_json["executedLines"]):
         variable_mappings = data_json["variableMappings"][i]
@@ -166,96 +143,6 @@ def get_variable_definition_line(tokenized_script, var_name, start_line, end_lin
         return None
     
 
-def gen_scope_prompt(code_snippet, var_name, line):
-    return f"the variable '{var_name}' defined on line {line} is a pointer. Does the object that '{var_name}' points to still exist outside this code snippet? Answer yes or no. \n\n ```\n{code_snippet}\n```"
-
-# Gets heap locations that persist outside of their scope
-def gen_scope_prompts(scope_info, scripts_json, path):
-    result = {}
-    result["not_local"] = []
-    result["local"] = []
-    
-    for scope, heap_locations in scope_info.items():
-        if "global" in scope:
-            continue
-        scope_json = json.loads(scope)
-
-        for heap_location in heap_locations:
-            if heap_location in result["local"] or heap_location in result["not_local"]:
-                continue
-            heap_location_result = {}
-            exists_outside = False
-            for other_scope, other_heap_locations in scope_info.items():
-                if other_scope == scope:
-                    continue
-                if heap_location in other_heap_locations:
-                    exists_outside = True
-            
-            heap_location_result["heap_location"] = heap_location
-            heap_location_result["variables"] = heap_locations[heap_location] # this is the list of variables
-            heap_location_result["scope"] = scope_json
-            if exists_outside:
-                result["not_local"].append(heap_location_result)
-            else:
-                result["local"].append(heap_location_result)
-    count = 0
-
-    prompts = {}
-    prompts["exists_outside"] = []
-    prompts["only_local"] = []
-    for pointer_data in result["not_local"]:
-        scope = pointer_data["scope"]
-        start_location = scope["startLocation"]
-        start_line = start_location["lineNumber"]
-        end_location = scope["endLocation"]
-        end_line = end_location["lineNumber"]
-        if start_line == end_line:
-            continue
-        script_id = start_location["scriptId"]
-        script_contents = scripts_json[script_id].split('\n')
-        code_snippet = get_script_contents_between_scope(script_contents, start_line, end_line)
-        if not code_snippet:
-            continue
-        var_name = random.choice(list(pointer_data["variables"].keys()))
-        line = pointer_data["variables"][var_name]
-        line = line - start_line
-        real_var_name = '_'.join(var_name.split('_')[:-1])
-        prompt = gen_scope_prompt(code_snippet, real_var_name, line)
-        prompt_info = {}
-        prompt_info["prompt"] = prompt
-        prompt_info["path"] = path
-        prompt_info["scriptId"] = script_id
-        prompt_info["start_line"] = start_line
-        prompt_info["end_line"] = end_line
-
-        prompts["exists_outside"].append(prompt_info)
-    for pointer_data in result["local"]:
-        scope = pointer_data["scope"]
-        start_location = scope["startLocation"]
-        start_line = start_location["lineNumber"]
-        end_location = scope["endLocation"]
-        end_line = end_location["lineNumber"]
-        if start_line == end_line:
-            continue
-        script_id = start_location["scriptId"]
-        script_contents = scripts_json[script_id].split('\n')
-        code_snippet = get_script_contents_between_scope(script_contents, start_line, end_line)
-        if not code_snippet:
-            continue
-        var_name = random.choice(list(pointer_data["variables"].keys()))
-        line = pointer_data["variables"][var_name]
-        line = line - start_line
-        real_var_name = '_'.join(var_name.split('_')[:-1])
-        prompt_info = {}
-        prompt = gen_scope_prompt(code_snippet, real_var_name, line)
-        prompt_info["prompt"] = prompt
-        prompt_info["path"] = path
-        prompt_info["scriptId"] = script_id
-        prompt_info["start_line"] = start_line
-        prompt_info["end_line"] = end_line
-        prompts["only_local"].append(prompt_info)
-    return prompts
-
 def get_javascript_files(data_dir):
     result = []
     for filename in os.listdir(data_dir):
@@ -279,35 +166,6 @@ def beautify_javascript_files(data_dir):
         with open(os.path.join(data_dir, "beautified", os.path.basename(javascript_file)), 'w') as f:
             f.write(js_content_beautified)
 
-
-
-
-
-
-def gen_type_prompt(code_snippet, var_name, line):
-    return f"What are the top 5 most likely types for the variable '{var_name}' defined on line {line}? \n\n ```\n{code_snippet}\n```"
-
-def gen_type_prompts(type_info, scripts_json, path):
-    result = []
-    for var_name, var_info in type_info.items():
-        var_result = {}
-        script_id = var_info["script_id"]
-        line = var_info["line"]
-        scope_start_line = var_info["scope_start_line"]
-        scope_end_line = var_info["scope_end_line"]
-        script_contents = scripts_json[script_id].split('\n')
-        code_snippet = get_script_contents_between_scope(script_contents, scope_start_line, scope_end_line)
-        if code_snippet:
-            adjusted_line = line - scope_start_line
-            real_var_name = '_'.join(var_name.split('_')[:-1])
-            prompt = gen_type_prompt(code_snippet, real_var_name, adjusted_line)
-            var_result["prompt"] = prompt
-            var_result["type"] = var_info["type"]
-            var_result["path"] = path
-            var_result["scriptId"] = script_id
-            var_result["line"] = line
-            result.append(var_result)
-    return result
 
 
 if __name__ == "__main__":

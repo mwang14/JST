@@ -122,10 +122,7 @@ def escape_get_scope_info(data_json, scripts_tokenized, metadata):
                                                                        scope_end_line,
                                                                        scope_end_column)
                         if not var_exists:
-                            #print(script_id, real_var_name, scope_start_line, scope_start_column, scope_end_line, scope_end_column)
-                            #sys.exit(1)
                             continue
-                        #print("here")
                     else:
                         continue
                 
@@ -216,8 +213,6 @@ if __name__ == "__main__":
     full_df = pd.DataFrame(columns=["tokens","annotations","labels"])
     print(len(data_json_files))
     for data_json_file in data_json_files:
-        #if "instagram.com" not in data_json_file:
-        #    continue
         
         out_dir = os.path.dirname(data_json_file)
         script_metadata_file = os.path.join(out_dir, "scriptMetadata.json")

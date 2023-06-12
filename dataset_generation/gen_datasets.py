@@ -9,6 +9,7 @@ import base64
 import random
 import esprima
 import pandas as pd
+import jsbeautifier
 
 
 def create_scope_id(scope_info):
@@ -159,41 +160,11 @@ def get_variable_definition_line(tokenized_script, var_name, start_line, end_lin
             continue
         if token.type == "Identifier" and token.value == var_name:
             start_lines.append(token_start_line)
-    #if len(start_lines) == 1:
     if len(start_lines):
         return start_lines[0]
     else:
         return None
-    #else:
-    #    return None
     
-
-def get_type_info(data_json, scripts_tokenized):
-    execution_info = data_json["variableMappings"]
-    lines_executed = data_json["executedLines"]
-    result = {} 
-    for i,info in enumerate(execution_info):
-        for var_name in info:
-            var_result = {}
-            var_info = info[var_name]
-            var_type = get_type(var_info)
-            scope = var_info["scopeInfo"]
-            if var_type == "function" or var_type == "undefined" or scope["scope"] == "global":
-                continue
-            start_line = scope["startLocation"]["lineNumber"]
-            end_line = scope["endLocation"]["lineNumber"]
-            real_var_name = '_'.join(var_name.split('_')[:-1])
-            script_id = scope["startLocation"]["scriptId"]
-            if script_id in scripts_tokenized:
-                var_definition_line = get_variable_definition_line(scripts_tokenized[script_id], real_var_name, start_line, end_line)
-                if var_definition_line:
-                    var_result["line"] = var_definition_line
-                    var_result["type"] = var_type
-                    var_result["script_id"] = script_id
-                    var_result["scope_start_line"] = start_line
-                    var_result["scope_end_line"] = end_line
-                    result[var_name] = var_result
-    return result
 
 def gen_scope_prompt(code_snippet, var_name, line):
     return f"the variable '{var_name}' defined on line {line} is a pointer. Does the object that '{var_name}' points to still exist outside this code snippet? Answer yes or no. \n\n ```\n{code_snippet}\n```"
@@ -285,104 +256,32 @@ def gen_scope_prompts(scope_info, scripts_json, path):
         prompts["only_local"].append(prompt_info)
     return prompts
 
-
-
-def find_other_variable_in_same_script(alias_info,heap_location, var_name, script_id):
-    all_variables = {}
-    for other_heap_location, variables in alias_info.items():
-        if other_heap_location == heap_location:
-            continue
-        for other_var_name in variables:
-            if other_var_name != var_name:
-                if variables[other_var_name]["startLocation"]["scriptId"] == script_id:
-                    all_variables[other_var_name] = variables[other_var_name]
-    if len(all_variables):
-        other_var = random.choice(list(all_variables.keys()))
-        other_var_start_line = all_variables[other_var]["startLocation"]["lineNumber"]
-        other_var_end_line = all_variables[other_var]["endLocation"]["lineNumber"]
-        return other_var, other_var_start_line, other_var_end_line
-    else: 
-        return None, None, None
-
-def gen_alias_prompt(code_snippet, 
-                     first_var_name, 
-                     second_var_name, 
-                     first_var_start_line, 
-                     first_var_end_line, 
-                     second_var_start_line, 
-                     second_var_end_line):
-    return f"Can the variable '{first_var_name}' between lines {first_var_start_line} and {first_var_end_line} point to the same location as the variable '{second_var_name}' between lines {second_var_start_line} and {second_var_end_line}? Answer yes or no. \n\n ```\n{code_snippet}\n```"
-
-def gen_alias_prompts(alias_info, scripts_json):
-    result = {}
-    result["aliases"] = []
-    result["no_alias"] = []
-    for heap_location, variables in alias_info.items():
-        if len(variables) >= 2:
-            first_var = random.choice(list(variables.keys()))
-            second_var = None
-            for other_var in variables:
-                if other_var != first_var:
-                    if variables[first_var]["startLocation"]["scriptId"] == variables[other_var]["startLocation"]["scriptId"]:
-                        second_var = other_var
-            if second_var == None:
-                continue
-            script_id = variables[first_var]["startLocation"]["scriptId"]
-            script_contents = scripts_json[script_id].split('\n')
-            first_var_start_line = variables[first_var]["startLocation"]["lineNumber"]
-            second_var_start_line = variables[second_var]["startLocation"]["lineNumber"]
-            start_line = min(first_var_start_line, second_var_start_line)
-            first_var_end_line = variables[first_var]["endLocation"]["lineNumber"]
-            second_var_end_line = variables[second_var]["endLocation"]["lineNumber"]
-            end_line = max(first_var_end_line, second_var_end_line)
-            if section_too_big(script_contents, start_line, end_line):
-                continue
-            code_snippet, new_start_line = get_script_section(script_contents, start_line, end_line)
-            first_var_start_line = first_var_start_line - new_start_line
-            second_var_start_line = second_var_start_line - new_start_line
-            first_var_end_line = first_var_end_line - new_start_line
-            second_var_end_line = second_var_end_line - new_start_line
-            first_var_name = '_'.join(first_var.split('_')[:-1])
-            second_var_name = '_'.join(second_var.split('_')[:-1])
-            prompt = gen_alias_prompt(code_snippet, 
-                                      first_var_name, 
-                                      second_var_name, 
-                                      first_var_start_line, 
-                                      first_var_end_line, 
-                                      second_var_start_line, 
-                                      second_var_end_line)
-            result["aliases"].append(prompt)
-
-        if len(alias_info) > 1:
-            first_var = random.choice(list(variables.keys()))
-            script_id = variables[first_var]["startLocation"]["scriptId"]
-            script_contents = scripts_json[script_id].split('\n')
-            first_var_start_line = variables[first_var]["startLocation"]["lineNumber"]
-            first_var_end_line = variables[first_var]["endLocation"]["lineNumber"]
-            second_var, second_var_start_line, second_var_end_line = find_other_variable_in_same_script(alias_info, heap_location, first_var, script_id)
-            if second_var == None:
-                continue
-
-            start_line = min(first_var_start_line, second_var_start_line)
-            end_line = max(first_var_end_line, second_var_end_line)
-            if section_too_big(script_contents, start_line, end_line):
-                continue
-            code_snippet, new_start_line = get_script_section(script_contents, start_line, end_line)
-            first_var_start_line = first_var_start_line - new_start_line
-            second_var_start_line = second_var_start_line - new_start_line
-            first_var_end_line = first_var_end_line - new_start_line
-            second_var_end_line = second_var_end_line - new_start_line
-            first_var_name = '_'.join(first_var.split('_')[:-1])
-            second_var_name = '_'.join(second_var.split('_')[:-1])
-            prompt = gen_alias_prompt(code_snippet, 
-                                      first_var_name, 
-                                      second_var_name, 
-                                      first_var_start_line, 
-                                      first_var_end_line, 
-                                      second_var_start_line, 
-                                      second_var_end_line)
-            result["no_alias"].append(prompt)
+def get_javascript_files(data_dir):
+    result = []
+    for filename in os.listdir(data_dir):
+        if filename.isdigit() or filename.endswith(".js"):
+            result.append(os.path.join(data_dir,filename))
     return result
+
+def beautify_javascript_files(data_dir):
+
+    opts = jsbeautifier.default_options
+    opts.space_in_empty_paren = False
+    opts.space_in_paren = False
+    opts.space_after_anon_function = False
+    opts.space_after_named_function = False
+    opts.indent_size = 4
+
+    javascript_files = get_javascript_files(data_dir)
+    os.makedirs(os.path.join(data_dir, "beautified"), exist_ok=True)
+    for javascript_file in javascript_files:
+        js_content_beautified = jsbeautifier.beautify_file(javascript_file, opts)
+        with open(os.path.join(data_dir, "beautified", os.path.basename(javascript_file)), 'w') as f:
+            f.write(js_content_beautified)
+
+
+
+
 
 
 def gen_type_prompt(code_snippet, var_name, line):

@@ -6,6 +6,8 @@ There has been an explosion in using machine learning for programming tasks, ran
 
 JST works by automatically instrumenting client-side Javascript using Google Chrome's Developer Tools alongside running a webcrawler. JST collects runtime information at each statement that is executed. Similar to prior data curation efforts such as ImageNet, we collect this data by crawling popular websites. We present a dataset of Javascript code from crawling the top 1,000 most popular websites with line-by-line annotations for the runtime information. 
 
+The data for the top 1000 websites can be found [here](https://www.dropbox.com/sh/bb7f7dt4g2e6bsz/AAD9qPohF2KsUpiLkbmBt8r3a?dl=0). The data for the top 100 websites can be found [here](https://www.dropbox.com/sh/wloq43g38w4ncjj/AAC5-o_SzqZt3Jv41gQGdVJSa?dl=0).
+
 ---
 `runJST.js` is the script that crawls a website and collects the runtime information. It takes three arguments: 
 - __website__: The URL to crawl.
